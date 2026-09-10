@@ -1,0 +1,63 @@
+name: Deploy to Cloudflare
+
+# Fires on push, not on commit - committing locally ships nothing.
+on:
+  push:
+    branches: [main]
+  # Lets you re-run a deploy from the Actions tab without an empty commit,
+  # which is also how you retry after adding a missing secret.
+  workflow_dispatch:
+
+# Two pushes in quick succession must not race: an older build finishing
+# last would silently overwrite the newer one. Queue them instead, and never
+# cancel a deploy that is already talking to Cloudflare.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Typecheck, build, deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `ci` not `install`: installs exactly what package-lock.json pins, so
+      # a deploy cannot pick up a different dependency version than the one
+      # tested locally.
+      - name: Install dependencies
+        run: npm ci
+
+      # The gate. With auto-deploy there is no human between a typo and the
+      # room, so a broken build must fail here rather than on the projector.
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build client
+        run: npm run build
+
+      # Plain wrangler rather than a third-party action, so CI deploys with
+      # the exact version pinned in package-lock.json - no drift between what
+      # you run locally and what ships.
+      - name: Deploy Worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # An identifier, not a credential - it appears in every dashboard
+          # URL. Reaching the account still requires the token above.
+          CLOUDFLARE_ACCOUNT_ID: ecea8c533d0c8d1e9fb34436557b962b
+
+      - name: Summary
+        run: |
+          echo "### Deployed to Cloudflare :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "<https://mystery-rush.mystery-rush.workers.dev>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Commit \`${GITHUB_SHA::7}\` — ${GITHUB_REF_NAME}" >> $GITHUB_STEP_SUMMARY

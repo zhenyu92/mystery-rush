@@ -77,6 +77,62 @@ authoritative without any coordination between Worker invocations.
 
 ---
 
+## Continuous deployment from GitHub
+
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) deploys on every push to `main`.
+It needs one secret.
+
+**1. Create a Cloudflare API token.** Dashboard → **My Profile** → **API Tokens** → **Create
+Token** → use the **Edit Cloudflare Workers** template. That template already covers Workers
+Scripts, D1 and the account read this project needs. Scope it to your account and, if offered,
+to the specific zone. Copy the token — Cloudflare shows it exactly once.
+
+**2. Add it to GitHub.** Repo → **Settings** → **Secrets and variables** → **Actions** → **New
+repository secret**, named exactly:
+
+```
+CLOUDFLARE_API_TOKEN
+```
+
+Paste the token there and nowhere else. Never commit it, and never paste it into a chat or an
+issue — a leaked token can deploy to your account.
+
+The account ID is set as a plain value in the workflow rather than a secret. It is an identifier,
+visible in every dashboard URL; it grants nothing without the token.
+
+### After that
+
+| Action | Result |
+| --- | --- |
+| `git commit` | Nothing. Commits are local. |
+| `git push` (to `main`) | Typecheck, build, deploy. ~2 minutes. |
+| Push to any other branch | Nothing deploys. |
+| Actions tab → **Run workflow** | Re-deploys the current `main` without a new commit. |
+
+Two pushes in a row queue rather than race, so a slower older build cannot overwrite a newer one.
+
+### If you want a safety margin
+
+Deploying on `main` means a typo reaches the room about a minute after you push. To keep a
+deliberate step, change the trigger branch in the workflow to `release`, and ship with:
+
+```bash
+git push                        # safe: saves work, deploys nothing
+git push origin main:release    # deliberate: this is the one that goes live
+```
+
+### Rolling back
+
+```bash
+npx wrangler deployments list
+npx wrangler rollback <version-id>
+```
+
+That reverts the running Worker immediately without touching git — the fastest way out of a bad
+deploy mid-event. Fix the code and push afterwards.
+
+---
+
 ## Custom domain
 
 Add a route in `wrangler.jsonc`:

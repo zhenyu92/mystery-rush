@@ -137,7 +137,19 @@ credential that can start and end rounds — and is never sent to a player or pr
 
 ## Deployment
 
-See **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+Pushing to `main` deploys, via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+typecheck → build → `wrangler deploy`. A failing typecheck stops the deploy, which is the only
+thing standing between a typo and the room.
+
+```
+git push        ->  GitHub Actions  ->  Cloudflare      (~2 min, gated on typecheck)
+npm run deploy  ->  Cloudflare directly                 (~20 s, no gate)
+```
+
+Both still work. Reach for `npm run deploy` when you need a fix live *now* — on event night the
+CI round trip is the slow path.
+
+Full setup, including the one-time API token, is in **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 ---
 
