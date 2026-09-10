@@ -1,0 +1,340 @@
+import { useEffect, useState, type FormEvent } from 'react';
+import { CLUE_POINTS, typeLabel, type LeaderboardEntry } from '../../shared/types';
+import { useCountdown } from '../lib/useCountdown';
+import { useGameSocket } from '../lib/useGameSocket';
+import { Brand, ConnectionDot, TimerRing, formatXp, plural } from '../components/common';
+import { AnswerBars, Leaderboard, Podium } from '../components/game';
+import { Confetti } from '../components/Confetti';
+
+/**
+ * The big screen in the room. Read-only, no credentials, everything sized off
+ * viewport units so it reads from the back row.
+ */
+export function Display({
+  navigate,
+  code,
+}: {
+  navigate: (to: string, replace?: boolean) => void;
+  code: string;
+}) {
+  if (!code) return <AskForCode navigate={navigate} />;
+  return <Stage code={code} />;
+}
+
+function AskForCode({ navigate }: { navigate: (to: string, replace?: boolean) => void }) {
+  const [code, setCode] = useState('');
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (code.trim().length >= 4) navigate(`/display?code=${code.trim().toUpperCase()}`);
+  };
+  return (
+    <div className="page">
+      <header className="topbar">
+        <Brand tagline="Projector view" />
+      </header>
+      <form className="card card--accent stack" onSubmit={submit}>
+        <h1 className="title-lg">Show an event on the big screen</h1>
+        <div className="field">
+          <label className="field__label" htmlFor="dcode">
+            Event code
+          </label>
+          <input
+            id="dcode"
+            className="input input--code"
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+            placeholder="ABCDE"
+            autoFocus
+          />
+        </div>
+        <button className="btn btn--primary btn--lg btn--block">Open projector view</button>
+      </form>
+      <button className="link center" onClick={() => navigate('/')}>
+        Back to the start
+      </button>
+    </div>
+  );
+}
+
+type FinaleStage = 'countdown' | 'third' | 'second' | 'first' | 'celebrate';
+
+function Stage({ code }: { code: string }) {
+  const { status, snapshot, clockOffset } = useGameSocket({ code, role: 'display' });
+  const round = snapshot?.round ?? null;
+  const countdown = useCountdown(round, clockOffset);
+  const phase = snapshot?.phase ?? 'lobby';
+
+  const finale = useFinaleSequence(phase === 'finished');
+  const joinUrl = `${window.location.origin}/?code=${code}`;
+
+  return (
+    <div className="page page--stage">
+      <Confetti run={phase === 'finished' && finale.stage === 'celebrate'} continuous count={220} />
+
+      <header className="topbar" style={{ marginBottom: 8 }}>
+        <Brand tagline={snapshot?.eventName ?? 'Live'} />
+        <div className="hud">
+          {phase !== 'lobby' ? <span className="pill">Code {code}</span> : null}
+          {snapshot ? <span className="pill">{snapshot.players.length} playing</span> : null}
+          <ConnectionDot status={status} />
+        </div>
+      </header>
+
+      {/* ------------------------------------------------------- lobby */}
+      {phase === 'lobby' && snapshot ? (
+        <div className="stack center" style={{ alignItems: 'center', gap: 24 }}>
+          <div className="brand__tag">Join now on your phone</div>
+          <div className="codeplate" style={{ width: '100%', maxWidth: 900 }}>
+            <div className="codeplate__label">Event code</div>
+            <div className="codeplate__code" style={{ fontSize: 'clamp(70px, 16vw, 190px)' }}>
+              {code}
+            </div>
+            <div className="codeplate__url" style={{ fontSize: 'clamp(16px, 2vw, 28px)' }}>
+              {joinUrl}
+            </div>
+          </div>
+          <div className="scanline" style={{ width: '60%' }} />
+          <div className="playerchips" style={{ justifyContent: 'center', maxWidth: 1100 }}>
+            {snapshot.players.map((p) => (
+              <span className="chip" key={p.playerId} style={{ fontSize: 18, padding: '10px 16px' }}>
+                <span className={p.connected ? 'dot dot--on' : 'dot'} />
+                {p.nickname}
+              </span>
+            ))}
+          </div>
+          {snapshot.players.length === 0 ? (
+            <p className="muted stage__prev">Waiting for the first player...</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ------------------------------------------------------- round */}
+      {phase === 'round' && round ? (
+        <div className="stage__grid">
+          <div className="stack" style={{ gap: 20 }}>
+            <div className="row">
+              <span className="pill pill--category" style={{ fontSize: 15, padding: '8px 16px' }}>
+                {typeLabel(round.mysteryType).emoji} {typeLabel(round.mysteryType).label}
+              </span>
+              <span className="pill pill--live" style={{ fontSize: 15, padding: '8px 16px' }}>
+                Clue {round.currentClue} of {round.clueCount}
+              </span>
+              <span className="pill pill--xp" style={{ fontSize: 15, padding: '8px 16px' }}>
+                {CLUE_POINTS[round.currentClue - 1]} XP
+              </span>
+            </div>
+
+            <p className="stage__clue">
+              {'“'}
+              {round.clues[round.currentClue - 1]}
+              {'”'}
+            </p>
+
+            {round.currentClue > 1 ? (
+              <div className="stack stack--tight">
+                <div className="brand__tag">Earlier clues</div>
+                {round.clues.slice(0, -1).map((clue, i) => (
+                  <p className="stage__prev" key={i}>
+                    {i + 1}. {clue}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="stack center" style={{ alignItems: 'center', gap: 16 }}>
+            <div className="timer timer--xl">
+              <TimerRing
+                seconds={countdown.seconds}
+                fraction={countdown.fraction}
+                size="xl"
+                paused={round.status === 'paused'}
+              />
+            </div>
+            <div className="brand__tag">
+              {round.status === 'paused' ? 'Paused' : round.currentClue >= round.clueCount ? 'Last chance' : 'Next clue in'}
+            </div>
+            <div className="stage__title">
+              {round.answeredCount}
+              <span className="muted"> / {round.playerCount}</span>
+            </div>
+            <div className="brand__tag">Locked in</div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ----------------------------------------------------- results */}
+      {phase === 'results' && snapshot?.result ? (
+        <div className="stage__grid">
+          <div className="stack" style={{ gap: 18 }}>
+            <div className="reveal">
+              <div className="reveal__label" style={{ fontSize: 18 }}>
+                The answer was
+              </div>
+              <div className="reveal__answer" style={{ fontSize: 'clamp(38px, 6vw, 88px)' }}>
+                {snapshot.result.answer}
+              </div>
+            </div>
+            <p className="stage__prev center">
+              {snapshot.result.correctCount} of {snapshot.result.totalAnswers} answers were right
+            </p>
+            <AnswerBars
+              distribution={snapshot.result.distribution}
+              correctAnswer={snapshot.result.answer}
+              total={snapshot.result.totalAnswers}
+            />
+          </div>
+          <div className="stack stage__lb">
+            <div className="brand__tag">Standings</div>
+            <Leaderboard entries={snapshot.leaderboard} limit={8} showGains />
+          </div>
+        </div>
+      ) : null}
+
+      {/* ------------------------------------------------- leaderboard */}
+      {phase === 'leaderboard' && snapshot ? (
+        <div className="stack center" style={{ gap: 18 }}>
+          <h1 className="stage__title center">
+            {'\u{1F4CA}'} Leaderboard{' '}
+            <span className="muted" style={{ fontSize: '0.5em' }}>
+              after {plural(snapshot.roundsPlayed, 'mystery', 'mysteries')}
+            </span>
+          </h1>
+          <div className="stage__lb" style={{ width: '100%', maxWidth: 1000, margin: '0 auto' }}>
+            <Leaderboard entries={snapshot.leaderboard} limit={10} showGains />
+          </div>
+        </div>
+      ) : null}
+
+      {/* -------------------------------------------------- the finale */}
+      {phase === 'finished' && snapshot ? (
+        <FinalReveal
+          stage={finale.stage}
+          tick={finale.tick}
+          entries={snapshot.leaderboard}
+          rounds={snapshot.roundsPlayed}
+        />
+      ) : null}
+
+      {!snapshot ? (
+        <div className="center stack" style={{ alignItems: 'center' }}>
+          <div className="scanline" style={{ width: 240 }} />
+          <p className="muted">Connecting to event {code}...</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Drives the 3-2-1 build-up and the bottom-up podium reveal. Presentation
+ * only - the scores were settled by the server long before this runs.
+ */
+function useFinaleSequence(active: boolean) {
+  const [stage, setStage] = useState<FinaleStage>('countdown');
+  const [tick, setTick] = useState(3);
+
+  useEffect(() => {
+    if (!active) {
+      setStage('countdown');
+      setTick(3);
+      return;
+    }
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
+    const at = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms));
+
+    setStage('countdown');
+    setTick(3);
+    at(1000, () => setTick(2));
+    at(2000, () => setTick(1));
+    at(3000, () => setStage('third'));
+    at(5000, () => setStage('second'));
+    at(7000, () => setStage('first'));
+    at(9000, () => setStage('celebrate'));
+
+    return () => timers.forEach(clearTimeout);
+  }, [active]);
+
+  return { stage, tick };
+}
+
+const ORDER: FinaleStage[] = ['countdown', 'third', 'second', 'first', 'celebrate'];
+
+function FinalReveal({
+  stage,
+  tick,
+  entries,
+  rounds,
+}: {
+  stage: FinaleStage;
+  tick: number;
+  entries: LeaderboardEntry[];
+  rounds: number;
+}) {
+  const reached = (s: FinaleStage) => ORDER.indexOf(stage) >= ORDER.indexOf(s);
+  const winner = entries[0];
+
+  if (stage === 'countdown') {
+    return (
+      <div className="stack center" style={{ alignItems: 'center' }}>
+        <h1 className="winner__label">{'\u{1F3C6}'} Final results</h1>
+        <div className="countdown-huge" key={tick}>
+          {tick}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack center" style={{ alignItems: 'center', gap: 22 }}>
+      {reached('celebrate') && winner ? (
+        <div className="winner">
+          <div className="winner__label">{'\u{1F389}'} We have a winner</div>
+          <div className="winner__name">{winner.nickname}</div>
+          <div className="winner__score">{formatXp(winner.score)} XP</div>
+          <div className="pill pill--streak" style={{ fontSize: 15, marginTop: 10 }}>
+            {'\u{1F3C6}'} Mystery Master
+          </div>
+        </div>
+      ) : (
+        <div className="winner">
+          <div className="winner__label">{'\u{1F3C6}'} Final results</div>
+          <div className="stage__title">
+            {reached('first')
+              ? 'And the winner is...'
+              : reached('second')
+                ? 'Runner up'
+                : 'Third place'}
+          </div>
+        </div>
+      )}
+
+      <Podium
+        entries={[
+          reached('first') ? entries[0] : undefined,
+          reached('second') ? entries[1] : undefined,
+          reached('third') ? entries[2] : undefined,
+        ]}
+      />
+
+      {/* Everyone from 4th down, as one compact strip - a full table would
+          push the podium off the top of the projector. */}
+      {reached('celebrate') && entries.length > 3 ? (
+        <div className="center stack stack--tight" style={{ maxWidth: 1200 }}>
+          <p className="brand__tag">The rest of the field after {plural(rounds, 'mystery', 'mysteries')}</p>
+          <div className="playerchips" style={{ justifyContent: 'center' }}>
+            {entries.slice(3).map((e) => (
+              <span className="chip" key={e.playerId} style={{ fontSize: 17 }}>
+                <span className="dim">{e.rank}</span>
+                {e.nickname}
+                <span className="lb__gain" style={{ color: 'var(--lime)' }}>
+                  {formatXp(e.score)}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

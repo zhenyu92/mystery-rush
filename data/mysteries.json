@@ -1,0 +1,370 @@
+[
+  {
+    "id": "mystery-001",
+    "type": "landmark",
+    "title": "Famous Landmark",
+    "answer": "Eiffel Tower",
+    "options": ["Eiffel Tower", "Statue of Liberty", "Big Ben", "Colosseum", "Taj Mahal"],
+    "clues": [
+      "I was created for a major world exhibition.",
+      "Many artists of my day signed a letter begging for me to be torn down.",
+      "I am made primarily from iron, and I grow slightly taller on hot days.",
+      "I stand beside the River Seine.",
+      "I am the wrought-iron tower that defines the skyline of Paris."
+    ]
+  },
+  {
+    "id": "mystery-002",
+    "type": "place",
+    "title": "Famous Place",
+    "answer": "Mount Everest",
+    "options": ["Mount Everest", "Mount Fuji", "K2", "Kilimanjaro", "Mount Elbrus"],
+    "clues": [
+      "I am part of a major mountain range.",
+      "People pay tens of thousands of dollars for a chance to stand on me.",
+      "My summit sits in the jet stream, where the air holds a third of the oxygen you are breathing now.",
+      "I lie on the border between Nepal and Tibet.",
+      "I am Earth's highest mountain above sea level."
+    ]
+  },
+  {
+    "id": "mystery-003",
+    "type": "animal",
+    "title": "Amazing Animal",
+    "answer": "Giant Panda",
+    "options": ["Giant Panda", "Polar Bear", "Koala", "Red Panda", "Sloth"],
+    "clues": [
+      "I am a mammal, and I have the digestive system of a carnivore.",
+      "I spend up to fourteen hours a day eating.",
+      "My diet is almost entirely one particular fast-growing grass.",
+      "I am a national treasure of China, and I am loaned to zoos rather than sold.",
+      "I am the bear famous for my black-and-white fur."
+    ]
+  },
+  {
+    "id": "mystery-004",
+    "type": "space",
+    "title": "Space Mystery",
+    "answer": "Moon",
+    "options": ["Moon", "Mars", "Venus", "Europa", "Titan"],
+    "clues": [
+      "Humans have watched me and kept calendars by me for thousands of years.",
+      "I pull on Earth's oceans twice a day.",
+      "I have almost no atmosphere, so footprints left on me can last for millions of years.",
+      "Twelve people have walked on my surface.",
+      "I am Earth's only natural satellite."
+    ]
+  },
+  {
+    "id": "mystery-005",
+    "type": "invention",
+    "title": "Famous Invention",
+    "answer": "Telephone",
+    "options": ["Telephone", "Television", "Radio", "Computer", "Camera"],
+    "clues": [
+      "My arrival changed the way people communicate forever.",
+      "My early versions needed a human operator to physically connect two people.",
+      "Alexander Graham Bell is credited with my first practical patent, in 1876.",
+      "For a century I hung on walls with a cord and a rotary dial.",
+      "I let two people speak to each other from far apart, and today you carry me in your pocket."
+    ]
+  },
+  {
+    "id": "mystery-006",
+    "type": "food",
+    "title": "Famous Food",
+    "answer": "Pizza",
+    "options": ["Pizza", "Sushi", "Tacos", "Hamburger", "Paella"],
+    "clues": [
+      "I started as cheap street food for working people in Italy.",
+      "Arguments about what belongs on top of me can end friendships.",
+      "I am traditionally baked in a wood-fired oven at around 450 degrees Celsius.",
+      "My most famous version is named after a queen: tomato, mozzarella and basil.",
+      "I am round, flat, sliced into wedges, and Naples is my birthplace."
+    ]
+  },
+  {
+    "id": "mystery-007",
+    "type": "movie",
+    "title": "Movie Mystery",
+    "answer": "Titanic",
+    "options": ["Titanic", "Avatar", "Jaws", "The Matrix", "Jurassic Park"],
+    "clues": [
+      "I am built around a famous real-life disaster.",
+      "A very large ship plays a central role in my story.",
+      "My love story crosses a sharp divide of social class.",
+      "James Cameron directed me, and I won eleven Academy Awards.",
+      "My name is the name of the ship that sank in 1912."
+    ]
+  },
+  {
+    "id": "mystery-008",
+    "type": "company",
+    "title": "Technology Mystery",
+    "answer": "Google",
+    "options": ["Google", "Microsoft", "Apple", "Amazon", "Meta"],
+    "clues": [
+      "I began as a university research project run out of a garage.",
+      "My first product helped people find things they could not otherwise find.",
+      "My name turned into a verb that people use every day.",
+      "I also own the world's largest video platform.",
+      "My parent company is called Alphabet, and my name is a misspelling of a very large number."
+    ]
+  },
+  {
+    "id": "mystery-009",
+    "type": "landmark",
+    "title": "Ancient Wonder",
+    "answer": "Great Pyramid of Giza",
+    "options": ["Great Pyramid of Giza", "Colosseum", "Parthenon", "Machu Picchu", "Stonehenge"],
+    "clues": [
+      "I was finished roughly 4,500 years ago.",
+      "I held the record as the tallest structure made by humans for over 3,800 years.",
+      "I am built from millions of enormous limestone blocks.",
+      "I am the only surviving member of the Seven Wonders of the Ancient World.",
+      "I am the largest of the three pyramids standing on the Giza plateau in Egypt."
+    ]
+  },
+  {
+    "id": "mystery-010",
+    "type": "technology",
+    "title": "Everyday Technology",
+    "answer": "Internet",
+    "options": ["Internet", "Bluetooth", "GPS", "Wi-Fi", "Satellite TV"],
+    "clues": [
+      "I connect billions of people and devices.",
+      "I grew out of a military research network called ARPANET.",
+      "I move information as packets that can each take a different route.",
+      "Websites, email and video calls all ride on top of me.",
+      "I am the global network of interconnected computer networks."
+    ]
+  },
+  {
+    "id": "mystery-011",
+    "type": "city",
+    "title": "City Mystery",
+    "answer": "Venice",
+    "options": ["Venice", "Amsterdam", "Bruges", "Stockholm", "Copenhagen"],
+    "clues": [
+      "I was once the richest trading power in my part of the world.",
+      "I am built on soft ground, and I am slowly sinking.",
+      "I have no cars in my historic centre - deliveries arrive by boat.",
+      "My most famous boat is a slim black one steered by a standing rower.",
+      "I am the Italian city of canals, gondolas and St Mark's Square."
+    ]
+  },
+  {
+    "id": "mystery-012",
+    "type": "country",
+    "title": "Country Mystery",
+    "answer": "Japan",
+    "options": ["Japan", "South Korea", "China", "Vietnam", "Philippines"],
+    "clues": [
+      "I am an island nation made up of thousands of islands.",
+      "I closed myself off from most of the world for over 200 years.",
+      "I sit on the Ring of Fire, so earthquakes shape how I build everything.",
+      "My bullet trains are famous for being measured in seconds, not minutes.",
+      "My flag is a red circle on white, and my capital is Tokyo."
+    ]
+  },
+  {
+    "id": "mystery-013",
+    "type": "sport",
+    "title": "Sport Mystery",
+    "answer": "Basketball",
+    "options": ["Basketball", "Volleyball", "Handball", "Netball", "Water Polo"],
+    "clues": [
+      "I was invented indoors, on purpose, to keep students active during winter.",
+      "My inventor's first version used two peach baskets and a soccer ball.",
+      "Five players per side take the court at a time.",
+      "Scoring from beyond a certain arc is worth an extra point.",
+      "My most famous league is the NBA, and the hoop stands ten feet high."
+    ]
+  },
+  {
+    "id": "mystery-014",
+    "type": "historical_event",
+    "title": "Turning Point in History",
+    "answer": "Fall of the Berlin Wall",
+    "options": [
+      "Fall of the Berlin Wall",
+      "Signing of the Magna Carta",
+      "Moon Landing",
+      "French Revolution",
+      "End of Apartheid"
+    ],
+    "clues": [
+      "I happened suddenly, and almost nobody predicted my exact date.",
+      "I began partly because of a confused announcement at a press conference.",
+      "Crowds attacked concrete with hammers and chisels, and kept the pieces as souvenirs.",
+      "I marked the beginning of the end of the Cold War, in November 1989.",
+      "I am the night a divided German city tore down the barrier that split it in two."
+    ]
+  },
+  {
+    "id": "mystery-015",
+    "type": "object",
+    "title": "Famous Object",
+    "answer": "Rubik's Cube",
+    "options": ["Rubik's Cube", "Lego Brick", "Yo-Yo", "Slinky", "Etch A Sketch"],
+    "clues": [
+      "My inventor was an architecture professor who built me as a teaching tool.",
+      "It took my own inventor a month to solve me the first time.",
+      "I have roughly 43 quintillion possible arrangements.",
+      "Any arrangement of me can be solved in 20 moves or fewer.",
+      "I am the six-sided colour puzzle you twist until every face matches."
+    ]
+  },
+  {
+    "id": "mystery-016",
+    "type": "animal",
+    "title": "Extreme Survivor",
+    "answer": "Emperor Penguin",
+    "options": ["Emperor Penguin", "Walrus", "Arctic Fox", "Snowy Owl", "Harp Seal"],
+    "clues": [
+      "I am a bird, but I have never flown a day in my life.",
+      "I can dive deeper than 500 metres and hold my breath for over 20 minutes.",
+      "We huddle in enormous crowds and rotate positions so nobody freezes on the outside.",
+      "The father balances the single egg on his feet through the polar winter.",
+      "I am the largest penguin, and I live in Antarctica."
+    ]
+  },
+  {
+    "id": "mystery-017",
+    "type": "food",
+    "title": "Iconic Dish",
+    "answer": "Sushi",
+    "options": ["Sushi", "Dim Sum", "Kimchi", "Pho", "Ramen"],
+    "clues": [
+      "I began as a way to preserve fish, not as a delicacy.",
+      "My defining ingredient is not the fish - it is the seasoned rice.",
+      "I became fast food sold at street stalls in old Edo.",
+      "I am often served with wasabi, pickled ginger and soy sauce.",
+      "I am the Japanese dish of vinegared rice, often topped or rolled with raw fish."
+    ]
+  },
+  {
+    "id": "mystery-018",
+    "type": "technology",
+    "title": "Invisible Technology",
+    "answer": "GPS",
+    "options": ["GPS", "Radar", "Sonar", "Wi-Fi", "Bluetooth"],
+    "clues": [
+      "I was built by a military, then opened up to everyone on Earth for free.",
+      "I depend on a constellation of satellites orbiting about 20,000 km up.",
+      "I only work because my atomic clocks are corrected for Einstein's relativity.",
+      "You need signals from at least four of my satellites to pin down a position.",
+      "I am the system in your phone that tells you exactly where you are."
+    ]
+  },
+  {
+    "id": "mystery-019",
+    "type": "space",
+    "title": "Planet Mystery",
+    "answer": "Saturn",
+    "options": ["Saturn", "Jupiter", "Uranus", "Neptune", "Mars"],
+    "clues": [
+      "I am a gas giant with no solid surface to stand on.",
+      "I am so light for my size that I would float in a big enough bathtub of water.",
+      "I have well over a hundred known moons, including one with lakes of liquid methane.",
+      "The Cassini spacecraft spent 13 years studying me before diving into my clouds.",
+      "I am the planet famous for my spectacular rings of ice and rock."
+    ]
+  },
+  {
+    "id": "mystery-020",
+    "type": "movie",
+    "title": "Blockbuster Mystery",
+    "answer": "Jurassic Park",
+    "options": ["Jurassic Park", "King Kong", "Godzilla", "The Land Before Time", "Jaws"],
+    "clues": [
+      "I am based on a bestselling novel by Michael Crichton.",
+      "My most famous moment of dread involves a glass of water and a ripple.",
+      "Steven Spielberg directed me, and I changed visual effects forever.",
+      "My plot turns on cloning ancient creatures from DNA trapped in amber.",
+      "I am the 1993 film about a dinosaur theme park that goes very wrong."
+    ]
+  },
+  {
+    "id": "mystery-021",
+    "type": "company",
+    "title": "Brand Mystery",
+    "answer": "LEGO",
+    "options": ["LEGO", "Playmobil", "Mattel", "Hasbro", "Nintendo"],
+    "clues": [
+      "I am a family business founded in a small Danish town in 1932.",
+      "I started out making wooden toys, and my workshop burned down more than once.",
+      "My name comes from two Danish words meaning 'play well'.",
+      "By sheer number of units produced, I am one of the largest tyre makers in the world.",
+      "My interlocking plastic bricks from 1958 still snap onto the ones made today."
+    ]
+  },
+  {
+    "id": "mystery-022",
+    "type": "landmark",
+    "title": "Famous Building",
+    "answer": "Sydney Opera House",
+    "options": [
+      "Sydney Opera House",
+      "Burj Khalifa",
+      "Guggenheim Museum Bilbao",
+      "Petronas Towers",
+      "Marina Bay Sands"
+    ],
+    "clues": [
+      "My winning design was pulled back out of a competition's reject pile.",
+      "I ran ten years late and more than fourteen times over budget.",
+      "My architect resigned partway through and never saw me finished.",
+      "My shells are clad in over a million white and cream tiles, and I sit on a harbour.",
+      "I am the sail-shaped performing arts centre on Bennelong Point in Sydney."
+    ]
+  },
+  {
+    "id": "mystery-023",
+    "type": "invention",
+    "title": "World-Changing Invention",
+    "answer": "Printing Press",
+    "options": ["Printing Press", "Typewriter", "Telegraph", "Camera", "Steam Engine"],
+    "clues": [
+      "Before me, copying a single book could take a scribe a year.",
+      "I borrowed my key mechanism from wine and olive presses.",
+      "My breakthrough was movable metal type that could be rearranged endlessly.",
+      "Johannes Gutenberg built me in Mainz around 1440.",
+      "I am the machine that made books cheap and put mass literacy within reach."
+    ]
+  },
+  {
+    "id": "mystery-024",
+    "type": "place",
+    "title": "Natural Wonder",
+    "answer": "Amazon Rainforest",
+    "options": [
+      "Amazon Rainforest",
+      "Great Barrier Reef",
+      "Congo Basin",
+      "Serengeti",
+      "Borneo Rainforest"
+    ],
+    "clues": [
+      "I span nine countries, though most of me sits in one.",
+      "I generate much of my own rainfall - my trees breathe out rivers of vapour.",
+      "Roughly one in ten known species on Earth lives inside me.",
+      "The river running through me discharges more water than the next several largest rivers combined.",
+      "I am the vast South American rainforest named after that river."
+    ]
+  },
+  {
+    "id": "mystery-025",
+    "type": "city",
+    "title": "Modern Metropolis",
+    "answer": "Singapore",
+    "options": ["Singapore", "Hong Kong", "Dubai", "Kuala Lumpur", "Tokyo"],
+    "clues": [
+      "I am a city, an island and a country all at once.",
+      "I became independent in 1965, not by choice but by separation.",
+      "I have four official languages and almost no natural resources of my own.",
+      "My port is one of the busiest on the planet, and my airport keeps winning awards.",
+      "My skyline features a hotel topped by a boat, and my mascot is a lion with a fish's tail."
+    ]
+  }
+]
