@@ -1026,6 +1026,48 @@ p {
   word-break: break-all;
 }
 
+/* --------------------------------------------------------------- qr code */
+
+.qr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.qr svg {
+  display: block;
+  /* White padding around the symbol keeps the quiet zone intact against the
+     dark page, which is what makes it scan at an angle. */
+  padding: 10px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  max-width: 100%;
+  height: auto;
+}
+.qr__label {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+/* Projector lobby: code and QR side by side, stacking on narrow screens. */
+.joinsplit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 28px;
+  align-items: center;
+  width: 100%;
+}
+@media (max-width: 900px) {
+  .joinsplit {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+  }
+}
+
 .playerchips {
   display: flex;
   flex-wrap: wrap;

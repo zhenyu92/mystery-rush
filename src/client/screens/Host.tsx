@@ -7,6 +7,7 @@ import { useGameSocket } from '../lib/useGameSocket';
 import { Brand, ConnectionDot, Modal, TimerRing, Toast, formatXp, plural } from '../components/common';
 import { AnswerBars, ClueList, CluePips, Leaderboard, Podium } from '../components/game';
 import { Confetti } from '../components/Confetti';
+import { QrCode } from '../components/QrCode';
 
 export function Host({
   navigate,
@@ -185,11 +186,18 @@ function HostConsole({
           {/* ---------------------------------------------------- lobby */}
           {phase === 'lobby' ? (
             <div className="codeplate">
-              <div className="codeplate__label">Players join with this code</div>
-              <div className="codeplate__code">{code}</div>
-              <button className="link codeplate__url" onClick={copyJoinUrl}>
-                {copied ? 'Copied!' : joinUrl}
-              </button>
+              <div className="joinsplit">
+                <div>
+                  <div className="codeplate__label">Players join with this code</div>
+                  <div className="codeplate__code">{code}</div>
+                  <button className="link codeplate__url" onClick={copyJoinUrl}>
+                    {copied ? 'Copied!' : joinUrl}
+                  </button>
+                </div>
+                {/* Here so the host can hold a laptop up to a straggler who
+                    missed the projector. */}
+                <QrCode value={joinUrl} size={170} label="Scan to join" />
+              </div>
             </div>
           ) : null}
 

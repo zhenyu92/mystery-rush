@@ -5,6 +5,7 @@ import { useGameSocket } from '../lib/useGameSocket';
 import { Brand, ConnectionDot, TimerRing, formatXp, plural } from '../components/common';
 import { AnswerBars, Leaderboard, Podium } from '../components/game';
 import { Confetti } from '../components/Confetti';
+import { QrCode } from '../components/QrCode';
 
 /**
  * The big screen in the room. Read-only, no credentials, everything sized off
@@ -84,14 +85,18 @@ function Stage({ code }: { code: string }) {
       {phase === 'lobby' && snapshot ? (
         <div className="stack center" style={{ alignItems: 'center', gap: 24 }}>
           <div className="brand__tag">Join now on your phone</div>
-          <div className="codeplate" style={{ width: '100%', maxWidth: 900 }}>
-            <div className="codeplate__label">Event code</div>
-            <div className="codeplate__code" style={{ fontSize: 'clamp(70px, 16vw, 190px)' }}>
-              {code}
+          <div className="joinsplit" style={{ maxWidth: 1200 }}>
+            <div className="codeplate">
+              <div className="codeplate__label">Event code</div>
+              <div className="codeplate__code" style={{ fontSize: 'clamp(64px, 13vw, 170px)' }}>
+                {code}
+              </div>
+              <div className="codeplate__url" style={{ fontSize: 'clamp(15px, 1.7vw, 24px)' }}>
+                {joinUrl}
+              </div>
             </div>
-            <div className="codeplate__url" style={{ fontSize: 'clamp(16px, 2vw, 28px)' }}>
-              {joinUrl}
-            </div>
+            {/* Scanning skips both the URL and the code entirely. */}
+            <QrCode value={joinUrl} size={260} label="Or scan to join" />
           </div>
           <div className="scanline" style={{ width: '60%' }} />
           <div className="playerchips" style={{ justifyContent: 'center', maxWidth: 1100 }}>

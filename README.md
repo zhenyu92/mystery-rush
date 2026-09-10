@@ -1,5 +1,7 @@
 # Mystery Rush
 
+**Live at [play.mystery-rush.workers.dev](https://play.mystery-rush.workers.dev)**
+
 A live, multiplayer "guess the mystery" game show for company events. Five clues, twenty seconds
 each, one guess per player — and the earlier you commit, the more it is worth.
 
