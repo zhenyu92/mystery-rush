@@ -21,6 +21,7 @@ import {
   CLUE_COUNT,
   CLUE_DURATION_MS,
   EVENT_NAME_MAX,
+  INTRO_DURATION_MS,
   NICKNAME_MAX,
   pointsForClue,
   type ClientMessage,
@@ -99,8 +100,15 @@ interface RoundRecord {
   currentClue: number;
   clueStartedAt: number;
   clueEndsAt: number;
+  /**
+   * Length of the window currently running: the intro is shorter than a clue.
+   * Kept on the record so pause/resume restores the right proportion.
+   */
+  windowMs: number;
   /** Set only while paused: the clock is frozen with this much left. */
   pausedRemainingMs: number | null;
+  /** What the round goes back to when un-paused. */
+  statusBeforePause: 'intro' | 'active' | null;
   options: string[];
   answers: Record<string, AnswerRecord>;
 }
@@ -370,10 +378,11 @@ export class EventRoom extends DurableObject<Env> {
 
   override async webSocketClose(ws: WebSocket): Promise<void> {
     const meta = ws.deserializeAttachment() as SocketMeta | null;
-    if (meta?.role === 'player') {
-      // Let the socket finish closing before recomputing who is online.
-      queueMicrotask(() => this.broadcast());
-    }
+    if (meta?.role !== 'player') return;
+    // Someone dropping out can be what makes everyone who is left "done", so
+    // re-check the early-end condition rather than only redrawing the lobby.
+    if (await this.endEarlyIfEveryoneAnswered()) return;
+    this.broadcast();
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
@@ -417,6 +426,11 @@ export class EventRoom extends DurableObject<Env> {
       send(ws, { type: 'error', code: 'round_paused', message: 'The host paused the round.' });
       return;
     }
+    if (round.status === 'intro') {
+      // No clue is on screen yet, so there is no clue number to score against.
+      send(ws, { type: 'error', code: 'round_not_started', message: 'Wait for the first clue.' });
+      return;
+    }
     if (round.answers[player.id]) {
       send(ws, { type: 'error', code: 'already_answered', message: 'Your answer is already locked in.' });
       return;
@@ -445,7 +459,38 @@ export class EventRoom extends DurableObject<Env> {
     };
 
     await this.persist();
+
+    // Everyone who could answer has: no reason to make the room watch an
+    // empty clock run down.
+    if (await this.endEarlyIfEveryoneAnswered()) return;
+
     this.broadcast();
+  }
+
+  /**
+   * End the round the moment every connected player has locked in.
+   *
+   * Deliberately counts *connected* players: waiting on someone whose phone
+   * dropped would stall the room for the rest of the round. Players who are
+   * offline when it ends simply score zero, exactly as they would have by
+   * letting the clock expire.
+   *
+   * Returns true if it ended the round (in which case the caller must not
+   * broadcast again - endRound already did).
+   */
+  private async endEarlyIfEveryoneAnswered(): Promise<boolean> {
+    const round = this.round;
+    if (!round || round.status !== 'active' || this.meta?.phase !== 'round') return false;
+
+    const connected = this.connectedPlayerIds();
+    if (connected.size === 0) return false;
+
+    for (const playerId of connected) {
+      if (!round.answers[playerId]) return false;
+    }
+
+    await this.endRound();
+    return true;
   }
 
   private async handleHostAction(ws: WebSocket, msg: Extract<ClientMessage, { type: 'host' }>): Promise<void> {
@@ -527,15 +572,19 @@ export class EventRoom extends DurableObject<Env> {
     // Freeze the standings now so the post-round leaderboard can show movement.
     this.previousRanks = Object.fromEntries(this.rankings().map((e) => [e.playerId, e.rank]));
 
+    // Rounds open with a get-ready window: category on screen, no clue yet,
+    // no answering. Clue 1 (and the clock that costs points) starts after it.
     this.round = {
       roundId: randomId('round'),
       mysteryId: mystery.id,
       roundIndex: this.meta.roundsPlayed + 1,
-      status: 'active',
-      currentClue: 1,
+      status: 'intro',
+      currentClue: 0,
       clueStartedAt: now,
-      clueEndsAt: now + CLUE_DURATION_MS,
+      clueEndsAt: now + INTRO_DURATION_MS,
+      windowMs: INTRO_DURATION_MS,
       pausedRemainingMs: null,
+      statusBeforePause: null,
       options: buildOptions(mystery),
       answers: {},
     };
@@ -564,7 +613,8 @@ export class EventRoom extends DurableObject<Env> {
 
   private async pauseRound(): Promise<void> {
     const round = this.round;
-    if (!round || round.status !== 'active') return;
+    if (!round || (round.status !== 'active' && round.status !== 'intro')) return;
+    round.statusBeforePause = round.status;
     round.status = 'paused';
     round.pausedRemainingMs = Math.max(0, round.clueEndsAt - Date.now());
     await this.ctx.storage.deleteAlarm();
@@ -575,12 +625,14 @@ export class EventRoom extends DurableObject<Env> {
   private async resumeRound(): Promise<void> {
     const round = this.round;
     if (!round || round.status !== 'paused') return;
-    const remaining = round.pausedRemainingMs ?? CLUE_DURATION_MS;
+    const remaining = round.pausedRemainingMs ?? round.windowMs;
     const now = Date.now();
-    round.status = 'active';
-    round.clueStartedAt = now - (CLUE_DURATION_MS - remaining);
+    round.status = round.statusBeforePause ?? 'active';
+    // Back-date the start so the ring picks up exactly where it froze.
+    round.clueStartedAt = now - (round.windowMs - remaining);
     round.clueEndsAt = now + remaining;
     round.pausedRemainingMs = null;
+    round.statusBeforePause = null;
     await this.persist();
     await this.ctx.storage.setAlarm(round.clueEndsAt);
     this.broadcast();
@@ -592,7 +644,7 @@ export class EventRoom extends DurableObject<Env> {
    */
   override async alarm(): Promise<void> {
     const round = this.round;
-    if (!round || round.status !== 'active') return;
+    if (!round || (round.status !== 'active' && round.status !== 'intro')) return;
 
     const now = Date.now();
     if (now < round.clueEndsAt - 250) {
@@ -601,7 +653,7 @@ export class EventRoom extends DurableObject<Env> {
       return;
     }
 
-    if (round.currentClue >= CLUE_COUNT) {
+    if (round.status === 'active' && round.currentClue >= CLUE_COUNT) {
       await this.endRound();
       return;
     }
@@ -609,9 +661,11 @@ export class EventRoom extends DurableObject<Env> {
     // Anchor the next window to the scheduled deadline rather than to "now",
     // so alarm jitter cannot make the round drift longer clue after clue.
     const base = now - round.clueEndsAt < 5_000 ? round.clueEndsAt : now;
+    round.status = 'active'; // the intro, if that is what just expired, is over
     round.currentClue += 1;
     round.clueStartedAt = base;
     round.clueEndsAt = base + CLUE_DURATION_MS;
+    round.windowMs = CLUE_DURATION_MS;
 
     await this.persist();
     await this.ctx.storage.setAlarm(round.clueEndsAt);
@@ -742,6 +796,7 @@ export class EventRoom extends DurableObject<Env> {
     if (this.round) delete this.round.answers[playerId];
     delete this.previousRanks[playerId];
     await this.persist();
+    if (await this.endEarlyIfEveryoneAnswered()) return;
     for (const ws of this.ctx.getWebSockets()) {
       const meta = ws.deserializeAttachment() as SocketMeta | null;
       if (meta?.playerId === playerId) {
@@ -831,12 +886,14 @@ export class EventRoom extends DurableObject<Env> {
       status: round.status,
       currentClue: round.currentClue,
       clueCount: CLUE_COUNT,
-      // Only the clues that have actually been revealed leave the server.
+      // Only the clues that have actually been revealed leave the server -
+      // during the intro that is none of them.
       clues: mystery.clues.slice(0, round.currentClue),
       options: round.options,
       clueStartedAt: round.clueStartedAt,
       clueEndsAt: round.clueEndsAt,
       durationPerClue: CLUE_DURATION_MS,
+      windowMs: round.windowMs,
       remainingMs,
       acceptingAnswers: round.status === 'active',
       answeredCount: Object.keys(round.answers).length,

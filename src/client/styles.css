@@ -1026,6 +1026,53 @@ p {
   word-break: break-all;
 }
 
+/* ---------------------------------------------------------------- intro */
+/* The get-ready window. Category lands first, then the prompt, so the room
+   registers what kind of mystery it is before the clock starts. */
+
+.intro {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding-block: 8px;
+}
+
+.intro__type {
+  animation: intro-pop 0.5s cubic-bezier(0.2, 0.9, 0.25, 1.3) both;
+}
+.intro__title {
+  animation: intro-pop 0.5s cubic-bezier(0.2, 0.9, 0.25, 1.3) 0.75s both;
+}
+.intro__hint {
+  animation: intro-pop 0.5s ease 1.4s both;
+  color: var(--muted);
+}
+
+@keyframes intro-pop {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.intro__count {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--cyan);
+  font-size: 64px;
+}
+.intro__count--xl {
+  font-size: clamp(90px, 16vw, 200px);
+}
+
 /* --------------------------------------------------------------- qr code */
 
 .qr {

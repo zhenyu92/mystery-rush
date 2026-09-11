@@ -9,9 +9,22 @@ Players join from their phones with a five-character code. The host drives the s
 A third screen is built for the projector at the front of the room.
 
 ```
-CLUE 1 (500 XP)  ->  CLUE 2 (400)  ->  CLUE 3 (300)  ->  CLUE 4 (200)  ->  CLUE 5 (100)
-      20s               20s               20s               20s               20s
+GET READY  ->  CLUE 1 (500 XP)  ->  CLUE 2 (400)  ->  CLUE 3 (300)  ->  CLUE 4 (200)  ->  CLUE 5 (100)
+   10s             20s                 20s               20s               20s               20s
+   ^                                                                                          |
+   category on screen,                                 or the round ends early, the moment  <-+
+   no clue, answering closed                           every connected player has locked in
 ```
+
+Every round opens with a **10-second get-ready window**: the category is on screen, no clue is, and
+answering is closed. It gives the room time to look up from their phones before the clock that
+costs them points starts running.
+
+A round need not run its full 100 seconds. **The moment every connected player has locked in, it
+ends and the answer is revealed** — there is no reason to make a room watch an empty clock.
+Connected is the operative word: waiting on someone whose phone dropped would stall everyone, so
+players who are offline when a round ends simply score zero, exactly as they would have by letting
+the clock expire.
 
 ---
 
@@ -39,6 +52,8 @@ lied to:
 - **Points come from the server's clue number**, taken at the instant the submission arrives. The
   client does not send, and could not usefully forge, what a guess is worth.
 - **One guess per player per round** is enforced in the object, not the UI.
+- **Answering is refused during the intro**, since no clue is on screen and there is therefore no
+  clue number to score a guess against.
 - **Scores earned in a round are held back until the round ends**, so a player cannot infer that
   they were right by watching their own XP tick up early.
 
@@ -118,14 +133,14 @@ the raw type, so adding a new category works without touching the UI.
 
 ## Host controls
 
-Clue progression is automatic — the host never clicks through clues. The controls are for the
-things a live room actually needs:
+Clue progression is automatic — the host never clicks through clues, and a round everyone has
+answered closes itself. The controls are for the things a live room actually needs:
 
 | Control | Effect |
 | --- | --- |
 | **Start game / Next mystery** | Draws the next mystery, or a specific one you picked from the list. |
 | **Pause / Resume** | Freezes the clock and the clue progression for everyone; answers are refused while paused. |
-| **End round & reveal** | Ends early and reveals the answer immediately. |
+| **End round & reveal** | Ends early and reveals the answer immediately. (Happens on its own once everyone has answered.) |
 | **Show leaderboard** | Moves every screen to the standings. |
 | **End event** | Jumps to the final podium and the winner celebration. |
 | **Reset event** | Clears all scores and results, keeps the event and its players, restores the full question bank. Asks for confirmation. |

@@ -31,7 +31,9 @@ export function useCountdown(round: PublicRound | null, clockOffset: number): Co
 
   if (!round) return { remainingMs: 0, seconds: 0, fraction: 0 };
 
-  const total = round.durationPerClue || 1;
+  // Fill the ring against the window actually running - the intro is 10s,
+  // a clue is 20s - so the arc always drains from full to empty.
+  const total = round.windowMs || round.durationPerClue || 1;
   const remainingMs = paused
     ? round.remainingMs
     : Math.max(0, round.clueEndsAt - (Date.now() + clockOffset));

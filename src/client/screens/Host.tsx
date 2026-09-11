@@ -201,8 +201,35 @@ function HostConsole({
             </div>
           ) : null}
 
+          {/* ------------------------------------------ round: get ready */}
+          {phase === 'round' && round && round.status === 'intro' ? (
+            <div className="card card--accent intro">
+              <span className="cluehead__count">Mystery {round.roundIndex}</span>
+              <span
+                className="pill pill--category intro__type"
+                style={{ fontSize: 16, padding: '12px 22px' }}
+              >
+                {typeLabel(round.mysteryType).emoji} {typeLabel(round.mysteryType).label}
+              </span>
+              <h2 className="title-xl intro__title">{round.title}</h2>
+              <div className="intro__count">{countdown.seconds}</div>
+              <div className="timer__label">First clue in</div>
+              {liveBrief ? (
+                <div className="reveal" style={{ width: '100%', textAlign: 'left', marginTop: 10 }}>
+                  <div className="reveal__label">Answer (host only)</div>
+                  <div className="reveal__answer" style={{ fontSize: 24 }}>
+                    {liveBrief.answer}
+                  </div>
+                </div>
+              ) : null}
+              <p className="tiny dim" style={{ margin: 0 }}>
+                Ten seconds for the room to settle before clue 1. Answering is closed until then.
+              </p>
+            </div>
+          ) : null}
+
           {/* ---------------------------------------------------- round */}
-          {phase === 'round' && round ? (
+          {phase === 'round' && round && round.status !== 'intro' ? (
             <div className="card card--accent stack">
               <div className="row row--between">
                 <span className="pill pill--category">

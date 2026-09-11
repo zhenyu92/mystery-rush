@@ -162,7 +162,24 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
         </div>
       ) : null}
 
-      {phase === 'round' && round ? (
+      {/* Get-ready window: category, then the prompt, and no clue yet. */}
+      {phase === 'round' && round && round.status === 'intro' ? (
+        <div className="card card--accent intro">
+          <span className="cluehead__count">Mystery {round.roundIndex} of the night</span>
+          <span className="pill pill--category intro__type" style={{ fontSize: 15, padding: '10px 18px' }}>
+            {typeLabel(round.mysteryType).emoji} {typeLabel(round.mysteryType).label}
+          </span>
+          <h2 className="title-xl intro__title">{round.title}</h2>
+          <div className="intro__count">{countdown.seconds}</div>
+          <div className="timer__label">First clue in</div>
+          <p className="intro__hint tiny" style={{ maxWidth: 320 }}>
+            Clue 1 is worth {CLUE_POINTS[0]} XP. Every clue after that is worth less, so the moment you
+            are sure, lock it in.
+          </p>
+        </div>
+      ) : null}
+
+      {phase === 'round' && round && round.status !== 'intro' ? (
         <>
           <div className="card stack">
             <div className="row row--between">

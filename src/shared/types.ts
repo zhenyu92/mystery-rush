@@ -13,6 +13,13 @@ export const CLUE_COUNT = 5;
 /** Each clue is on screen for this long before the next one is revealed. */
 export const CLUE_DURATION_MS = 20_000;
 
+/**
+ * A "get ready" window at the top of every round. The category is on screen
+ * but no clue is, so the room can settle, read what kind of mystery it is and
+ * look up from their phones before the clock that costs them points starts.
+ */
+export const INTRO_DURATION_MS = 10_000;
+
 /** Points for a correct answer, indexed by clue number (1-based). */
 export const CLUE_POINTS: readonly number[] = [500, 400, 300, 200, 100];
 
@@ -38,7 +45,8 @@ export type EventPhase =
   | 'leaderboard' // standings between mysteries
   | 'finished'; // final podium
 
-export type RoundStatus = 'active' | 'paused' | 'ended';
+/** `intro` is the get-ready window: category shown, no clue, no answering. */
+export type RoundStatus = 'intro' | 'active' | 'paused' | 'ended';
 
 /**
  * The live round as the client is allowed to see it. `clues` only ever holds
@@ -51,7 +59,7 @@ export interface PublicRound {
   mysteryType: string;
   title: string;
   status: RoundStatus;
-  /** 1-based, 1..CLUE_COUNT */
+  /** 1-based, 1..CLUE_COUNT. Zero during the intro, before any clue exists. */
   currentClue: number;
   clueCount: number;
   /** Revealed clues, in order. Length === currentClue while active. */
@@ -63,6 +71,11 @@ export interface PublicRound {
   /** Server epoch ms when the current clue expires. */
   clueEndsAt: number;
   durationPerClue: number;
+  /**
+   * Length of the window currently running - the intro is shorter than a
+   * clue. The countdown ring fills against this, not `durationPerClue`.
+   */
+  windowMs: number;
   /** Milliseconds left on the clock, frozen while paused. */
   remainingMs: number;
   acceptingAnswers: boolean;

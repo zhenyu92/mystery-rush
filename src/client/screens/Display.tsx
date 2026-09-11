@@ -113,8 +113,26 @@ function Stage({ code }: { code: string }) {
         </div>
       ) : null}
 
+      {/* -------------------------------------------- round: get ready */}
+      {phase === 'round' && round && round.status === 'intro' ? (
+        <div className="intro">
+          <div className="brand__tag">Mystery {round.roundIndex}</div>
+          <span
+            className="pill pill--category intro__type"
+            style={{ fontSize: 'clamp(16px, 2vw, 30px)', padding: '14px 30px' }}
+          >
+            {typeLabel(round.mysteryType).emoji} {typeLabel(round.mysteryType).label}
+          </span>
+          <h1 className="winner__name intro__title" style={{ fontSize: 'clamp(38px, 7vw, 96px)' }}>
+            {round.title}
+          </h1>
+          <div className="intro__count intro__count--xl">{countdown.seconds}</div>
+          <div className="brand__tag intro__hint">First clue in</div>
+        </div>
+      ) : null}
+
       {/* ------------------------------------------------------- round */}
-      {phase === 'round' && round ? (
+      {phase === 'round' && round && round.status !== 'intro' ? (
         <div className="stage__grid">
           <div className="stack" style={{ gap: 20 }}>
             <div className="row">
