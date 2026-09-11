@@ -55,17 +55,37 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
   // When a new clue lands: a short buzz, so a player watching the room rather
   // than their phone feels the round move on, and a scroll that brings the new
   // clue into view above the docked answer control.
+  //
+  // The sentinel tracks whether this device has seen *this round* before, not
+  // whether it has seen any clue at all. Keying on the clue number alone
+  // either misses the intro -> clue 1 transition (the intro is clue 0, so
+  // there is no previous clue to compare against) or buzzes at someone who
+  // reconnects straight onto a live clue 3.
+  const seenRound = useRef<string | null>(null);
   const lastClue = useRef(0);
   useEffect(() => {
     const clue = round?.currentClue ?? 0;
-    if (clue > lastClue.current && lastClue.current > 0) {
+    const rid = round?.roundId ?? null;
+
+    if (rid !== seenRound.current) {
+      seenRound.current = rid;
+      lastClue.current = clue;
+      return;
+    }
+
+    if (clue > lastClue.current) {
       navigator.vibrate?.(35);
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
       requestAnimationFrame(() => {
-        document.querySelector('.clue--current')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        document
+          .querySelector('.clue--current')
+          // The scroll still happens under reduced motion - the player needs
+          // the clue on screen - it just stops being animated.
+          ?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' });
       });
     }
     lastClue.current = clue;
-  }, [round?.currentClue]);
+  }, [round?.roundId, round?.currentClue]);
 
   if (!code || !saved) {
     return (
@@ -103,7 +123,13 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
   }
 
   const phase = snapshot?.phase ?? 'lobby';
-  const myResult = snapshot?.result?.players.find((p) => p.playerId === self?.playerId) ?? null;
+  const resultPlayers = snapshot?.result?.players;
+  const myResult = resultPlayers?.find((p) => p.playerId === self?.playerId) ?? null;
+  // "Absent from the result" and "present but never answered" are different
+  // facts. The server builds result.players from the roster at end-of-round,
+  // so a player who joined during `results` was never eligible and must not be
+  // scolded for a mystery they could not have played.
+  const playedThisRound = Boolean(self && resultPlayers?.some((p) => p.playerId === self.playerId));
   const myRank = snapshot?.leaderboard.find((e) => e.playerId === self?.playerId) ?? null;
   const won = phase === 'finished' && myRank?.rank === 1;
 
@@ -269,7 +295,15 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
 
       {phase === 'results' && snapshot?.result ? (
         <>
-          {myResult?.selectedOption == null ? (
+          {!playedThisRound ? (
+            <div className="verdict verdict--idle">
+              <div className="verdict__emoji">{'\u{1F44B}'}</div>
+              <div className="verdict__title">You are in from the next one</div>
+              <div className="verdict__sub">
+                This mystery finished before you joined. Here is how it went.
+              </div>
+            </div>
+          ) : myResult?.selectedOption == null ? (
             <div className="verdict verdict--idle">
               <div className="verdict__emoji">{'\u{1F914}'}</div>
               <div className="verdict__title">No answer this time</div>

@@ -97,6 +97,11 @@ interface RoundRecord {
   mysteryId: string;
   roundIndex: number;
   status: RoundStatus;
+  /**
+   * When the round began, i.e. the start of the intro. Fixed for the life of
+   * the round, unlike `clueStartedAt`, which moves with every clue.
+   */
+  startedAt: number;
   currentClue: number;
   clueStartedAt: number;
   clueEndsAt: number;
@@ -485,9 +490,16 @@ export class EventRoom extends DurableObject<Env> {
     const connected = this.connectedPlayerIds();
     if (connected.size === 0) return false;
 
+    let eligible = 0;
     for (const playerId of connected) {
+      // Someone who walked in halfway through does not get to hold the room
+      // hostage: they may still answer, they just are not waited for.
+      const player = this.players[playerId];
+      if (!player || player.joinedAt > round.startedAt) continue;
+      eligible += 1;
       if (!round.answers[playerId]) return false;
     }
+    if (eligible === 0) return false;
 
     await this.endRound();
     return true;
@@ -579,6 +591,7 @@ export class EventRoom extends DurableObject<Env> {
       mysteryId: mystery.id,
       roundIndex: this.meta.roundsPlayed + 1,
       status: 'intro',
+      startedAt: now,
       currentClue: 0,
       clueStartedAt: now,
       clueEndsAt: now + INTRO_DURATION_MS,

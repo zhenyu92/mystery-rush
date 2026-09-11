@@ -1132,17 +1132,54 @@ p {
   font-size: 14px;
   animation: pop 0.35s ease both;
 }
+/* Deliberately a real target rather than a 15px glyph flush against the
+   nickname - this sits in the list the host scans for arrivals, and a
+   misclick removes a player. */
 .chip__kick {
   border: 0;
   background: transparent;
   color: var(--dim);
   cursor: pointer;
-  padding: 0 2px;
   font-size: 15px;
   line-height: 1;
+  min-width: 22px;
+  min-height: 22px;
+  margin-left: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  opacity: 0.35;
+  transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.chip:hover .chip__kick,
+.chip:focus-within .chip__kick {
+  opacity: 1;
 }
 .chip__kick:hover {
   color: var(--danger);
+  background: rgba(255, 95, 95, 0.15);
+}
+/* The host may well be on a tablet, so do not hide it behind hover there. */
+@media (pointer: coarse) {
+  .chip__kick {
+    opacity: 1;
+    min-width: 28px;
+    min-height: 28px;
+  }
+}
+
+/* The host's own answer panel: cooler than the gold reveal so it never reads
+   as the thing the room is looking at. */
+.reveal--host {
+  text-align: left;
+  width: 100%;
+  background: linear-gradient(140deg, rgba(139, 92, 255, 0.16), rgba(53, 228, 255, 0.1));
+  border-color: rgba(139, 92, 255, 0.4);
+}
+.reveal__answer--host {
+  font-size: 24px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
 }
 
 .stat {

@@ -190,6 +190,32 @@ check('round ended when the last unanswered player left', endedOnDisconnect);
 check('absent player scored zero',
   pb.last.snapshot.leaderboard.find((e) => e.nickname === 'Cara').lastRoundPoints === 0);
 
+// ------------------------------------------------- round 2b: late arrival
+console.log('=== 7b. A mid-round arrival does not hold the room hostage ===');
+send(host, { type: 'host', action: 'next_round' });
+await waitFor(pb, (s) => s.phase === 'round', 4000, 'round 2b');
+await waitUntil(() => host.briefs.length >= 3, 5000, 'round 2b brief');
+await waitFor(pb, (s) => s.round?.currentClue === 1, INTRO_DURATION_MS + 5000, 'round 2b clue 1');
+const ANSWER2B = host.briefs.at(-1).answer;
+
+// Dave walks in after the mystery has already started.
+const dave = (await post(`/api/events/${CODE}/join`, { nickname: 'Dave' })).body;
+const pd = connect(`code=${CODE}&role=player&playerId=${dave.playerId}&playerToken=${dave.playerToken}`);
+await waitOpen(pd);
+await sleep(600);
+check('late arrival is admitted mid-round', pd.last?.snapshot.phase === 'round');
+check('and can see the clues so far', pd.last?.snapshot.round.clues.length >= 1);
+
+// Everyone who was here when it started answers. Dave never does.
+send(pa, { type: 'submit_answer', option: ANSWER2B });
+send(pb, { type: 'submit_answer', option: ANSWER2B });
+const endedDespiteDave = await waitFor(pb, (s) => s.phase === 'results', 8000, 'end despite late arrival');
+check('round ends without waiting for the late arrival', endedDespiteDave);
+check('the late arrival scored nothing',
+  pb.last.snapshot.leaderboard.find((e) => e.nickname === 'Dave')?.lastRoundPoints === 0);
+pd.ws.close();
+await sleep(400);
+
 // ---------------------------------------------------------------- round 3
 console.log('\n=== 8. Full-length round when someone never answers (~110s) ===');
 pc = connect(`code=${CODE}&role=player&playerId=${cara.playerId}&playerToken=${cara.playerToken}`);
@@ -199,7 +225,7 @@ const t3 = Date.now();
 send(host, { type: 'host', action: 'next_round' });
 await waitFor(pb, (s) => s.phase === 'round', 4000, 'round 3');
 pb.clueLog.length = 0;
-await waitUntil(() => host.briefs.length >= 3, 5000, 'round 3 brief');
+await waitUntil(() => host.briefs.length >= 4, 5000, 'round 3 brief');
 const ANSWER3 = host.briefs.at(-1).answer;
 
 // Only Alice answers, so the clock has to run its full course.
@@ -248,7 +274,7 @@ check('reconnect restores the player', pa.last?.self.nickname === 'Alice' && pa.
 send(host, { type: 'host', action: 'show_leaderboard' });
 await waitFor(pb, (s) => s.phase === 'leaderboard', 3000, 'leaderboard');
 check('host can show the leaderboard', pb.last?.snapshot.phase === 'leaderboard');
-check('three mysteries played', pb.last?.snapshot.roundsPlayed === 3);
+check('four mysteries played', pb.last?.snapshot.roundsPlayed === 4);
 
 send(host, { type: 'host', action: 'end_event' });
 await waitFor(pb, (s) => s.phase === 'finished', 3000, 'finish');
@@ -258,7 +284,7 @@ send(host, { type: 'host', action: 'reset_event' });
 await waitFor(pb, (s) => s.phase === 'lobby', 4000, 'reset');
 check('reset returns to lobby', pb.last?.snapshot.phase === 'lobby');
 check('reset zeroes every score', pb.last.snapshot.leaderboard.every((e) => e.score === 0));
-check('reset keeps the players', pb.last.snapshot.players.length === 3);
+check('reset keeps the players', pb.last.snapshot.players.length === 4);
 check('reset restores the question bank', pb.last.snapshot.mysteriesRemaining === pb.last.snapshot.totalMysteries);
 
 send(host, { type: 'host', action: 'kick_player', playerId: bob.playerId });

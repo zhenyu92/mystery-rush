@@ -118,6 +118,53 @@ function CreateEvent({
 
 // ----------------------------------------------------------------- console
 
+type Confirm =
+  | { kind: 'reset' }
+  | { kind: 'end' }
+  | { kind: 'kick'; playerId: string; nickname: string };
+
+/**
+ * The answer, for the person holding the microphone. Masked by default, and
+ * rendered as dots rather than blurred: a CSS blur leaves the real string in
+ * the DOM and in the paint, which a screenshot or a phone camera recovers.
+ * Dots leak only the length.
+ */
+function HostAnswer({
+  answer,
+  clues,
+  hidden,
+  onToggle,
+}: {
+  answer: string;
+  clues: string[];
+  hidden: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="reveal reveal--host">
+      <div className="row row--between">
+        <div className="reveal__label">Answer (host only)</div>
+        <button className="link tiny" onClick={onToggle} aria-pressed={!hidden}>
+          {hidden ? '\u{1F441} Show' : '\u{1F648} Hide'}
+        </button>
+      </div>
+      <div className="reveal__answer reveal__answer--host">
+        {hidden ? '•'.repeat(Math.min(answer.length, 18)) : answer}
+      </div>
+      {!hidden && clues.length > 0 ? (
+        <details style={{ marginTop: 10 }}>
+          <summary className="link tiny">All {clues.length} clues</summary>
+          <ol className="tiny muted" style={{ margin: '8px 0 0', paddingLeft: 18, lineHeight: 1.6 }}>
+            {clues.map((c, i) => (
+              <li key={i}>{c}</li>
+            ))}
+          </ol>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function HostConsole({
   navigate,
   code,
@@ -136,7 +183,12 @@ function HostConsole({
   const round = snapshot?.round ?? null;
   const countdown = useCountdown(round, clockOffset);
   const [selectedMystery, setSelectedMystery] = useState<string>('');
-  const [confirm, setConfirm] = useState<null | 'reset' | 'end'>(null);
+  // A union rather than a parallel `kickTarget` state: it makes the three
+  // dialogs mutually exclusive by construction.
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  // Re-armed per round so ending one round with the answer showing cannot
+  // leak the next one.
+  const [answerHidden, setAnswerHidden] = useState(true);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -144,6 +196,11 @@ function HostConsole({
     const id = setTimeout(clearError, 3600);
     return () => clearTimeout(id);
   }, [lastError, clearError]);
+
+  const roundId = round?.roundId ?? null;
+  useEffect(() => {
+    setAnswerHidden(true);
+  }, [roundId]);
 
   const act = (action: HostAction, extra?: { mysteryId?: string; playerId?: string }) =>
     send({ type: 'host', action, ...extra });
@@ -215,12 +272,12 @@ function HostConsole({
               <div className="intro__count">{countdown.seconds}</div>
               <div className="timer__label">First clue in</div>
               {liveBrief ? (
-                <div className="reveal" style={{ width: '100%', textAlign: 'left', marginTop: 10 }}>
-                  <div className="reveal__label">Answer (host only)</div>
-                  <div className="reveal__answer" style={{ fontSize: 24 }}>
-                    {liveBrief.answer}
-                  </div>
-                </div>
+                <HostAnswer
+                  answer={liveBrief.answer}
+                  clues={liveBrief.clues}
+                  hidden={answerHidden}
+                  onToggle={() => setAnswerHidden((h) => !h)}
+                />
               ) : null}
               <p className="tiny dim" style={{ margin: 0 }}>
                 Ten seconds for the room to settle before clue 1. Answering is closed until then.
@@ -264,12 +321,12 @@ function HostConsole({
               </div>
 
               {liveBrief ? (
-                <div className="reveal" style={{ textAlign: 'left' }}>
-                  <div className="reveal__label">Answer (host only)</div>
-                  <div className="reveal__answer" style={{ fontSize: 24 }}>
-                    {liveBrief.answer}
-                  </div>
-                </div>
+                <HostAnswer
+                  answer={liveBrief.answer}
+                  clues={liveBrief.clues}
+                  hidden={answerHidden}
+                  onToggle={() => setAnswerHidden((h) => !h)}
+                />
               ) : null}
 
               <ClueList clues={round.clues} currentClue={round.currentClue} totalClues={round.clueCount} />
@@ -292,7 +349,7 @@ function HostConsole({
                 <div className="tiny muted" style={{ marginTop: 6 }}>
                   {snapshot.result.correctCount} correct out of {snapshot.result.totalAnswers} answers
                   {' · '}
-                  {total - snapshot.result.totalAnswers} did not answer
+                  {snapshot.result.players.length - snapshot.result.totalAnswers} did not answer
                 </div>
               </div>
               <div className="card__title" style={{ marginTop: 6 }}>
@@ -386,7 +443,7 @@ function HostConsole({
               ) : null}
 
               {phase !== 'finished' && phase !== 'lobby' ? (
-                <button className="btn btn--ghost" onClick={() => setConfirm('end')}>
+                <button className="btn btn--ghost" onClick={() => setConfirm({ kind: 'end' })}>
                   {'\u{1F3C1}'} End event
                 </button>
               ) : null}
@@ -472,7 +529,9 @@ function HostConsole({
                       className="chip__kick"
                       title={`Remove ${p.nickname}`}
                       aria-label={`Remove ${p.nickname}`}
-                      onClick={() => act('kick_player', { playerId: p.playerId })}
+                      onClick={() =>
+                        setConfirm({ kind: 'kick', playerId: p.playerId, nickname: p.nickname })
+                      }
                     >
                       {'×'}
                     </button>
@@ -488,7 +547,7 @@ function HostConsole({
 
           <div className="card stack">
             <div className="card__title">Danger zone</div>
-            <button className="btn btn--danger btn--sm" onClick={() => setConfirm('reset')}>
+            <button className="btn btn--danger btn--sm" onClick={() => setConfirm({ kind: 'reset' })}>
               Reset event
             </button>
             <p className="tiny dim" style={{ margin: 0 }}>
@@ -507,7 +566,7 @@ function HostConsole({
         </aside>
       </div>
 
-      {confirm === 'reset' ? (
+      {confirm?.kind === 'reset' ? (
         <Modal
           title="Reset this event?"
           confirmLabel="Reset event"
@@ -523,7 +582,7 @@ function HostConsole({
         </Modal>
       ) : null}
 
-      {confirm === 'end' ? (
+      {confirm?.kind === 'end' ? (
         <Modal
           title="End the event?"
           confirmLabel="End event"
@@ -535,6 +594,22 @@ function HostConsole({
         >
           Everyone jumps to the final results and the winner celebration. You can still reset afterwards to
           run another game.
+        </Modal>
+      ) : null}
+
+      {confirm?.kind === 'kick' ? (
+        <Modal
+          title={`Remove ${confirm.nickname}?`}
+          confirmLabel="Remove player"
+          danger
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => {
+            act('kick_player', { playerId: confirm.playerId });
+            setConfirm(null);
+          }}
+        >
+          They are dropped from the event and their score goes with them. If they rejoin they start
+          again from zero.
         </Modal>
       ) : null}
 
