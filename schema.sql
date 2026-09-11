@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS rounds (
   event_code  TEXT NOT NULL,
   mystery_id  TEXT NOT NULL,
   round_index INTEGER NOT NULL,
+  points_multiplier INTEGER NOT NULL DEFAULT 1,
   status      TEXT NOT NULL,
   started_at  INTEGER NOT NULL,
   ended_at    INTEGER,
@@ -59,7 +60,11 @@ CREATE TABLE IF NOT EXISTS answers (
   submitted_at    INTEGER NOT NULL,
   clue_number     INTEGER NOT NULL,
   is_correct      INTEGER NOT NULL,
+  -- The clue value. bonus_points and multiplier are the rest of the sum, so
+  -- (points_awarded + bonus_points) * multiplier is what actually landed.
   points_awarded  INTEGER NOT NULL,
+  bonus_points    INTEGER NOT NULL DEFAULT 0,
+  multiplier      INTEGER NOT NULL DEFAULT 1,
   response_ms     INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (round_id, player_id)
 );

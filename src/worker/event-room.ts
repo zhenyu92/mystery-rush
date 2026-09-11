@@ -20,10 +20,12 @@ import { DurableObject } from 'cloudflare:workers';
 import {
   CLUE_COUNT,
   CLUE_DURATION_MS,
+  DOUBLE_MULTIPLIER,
   EVENT_NAME_MAX,
   INTRO_DURATION_MS,
   MAX_RESPONSE_MS,
   RESPONSE_BUCKET_MS,
+  streakBonus,
   NICKNAME_MAX,
   pointsForClue,
   type ClientMessage,
@@ -71,6 +73,10 @@ interface EventMeta {
   createdAt: number;
   phase: EventPhase;
   roundsPlayed: number;
+  /** The next round scores double. Armed by the host or by plannedRounds. */
+  doublePending: boolean;
+  /** How many mysteries the host intends to run, if they said so up front. */
+  plannedRounds: number | null;
 }
 
 interface PlayerRecord {
@@ -113,6 +119,8 @@ interface RoundRecord {
    * the round, unlike `clueStartedAt`, which moves with every clue.
    */
   startedAt: number;
+  /** Committed when the round starts, so arming later cannot change it. */
+  pointsMultiplier: number;
   currentClue: number;
   clueStartedAt: number;
   clueEndsAt: number;
@@ -163,7 +171,11 @@ export class EventRoom extends DurableObject<Env> {
         previousRanks: Record<string, number>;
       }>('state');
       if (stored) {
-        this.meta = stored.meta;
+        this.meta = {
+          ...stored.meta,
+          doublePending: stored.meta.doublePending ?? false,
+          plannedRounds: stored.meta.plannedRounds ?? null,
+        };
         // A room restored from a blob written before these fields existed has
         // `undefined` for them, and `undefined + n` is NaN, which would poison
         // the comparator silently. Default everything on the way in.
@@ -213,7 +225,12 @@ export class EventRoom extends DurableObject<Env> {
   }
 
   private async handleInit(request: Request): Promise<Response> {
-    const body = (await request.json()) as { eventCode?: string; eventName?: string; hostToken?: string };
+    const body = (await request.json()) as {
+      eventCode?: string;
+      eventName?: string;
+      hostToken?: string;
+      plannedRounds?: number;
+    };
     if (this.meta) return json({ error: 'already_initialised' }, 409);
     if (!body.eventCode || !body.hostToken) return json({ error: 'bad_request' }, 400);
 
@@ -224,6 +241,11 @@ export class EventRoom extends DurableObject<Env> {
       createdAt: Date.now(),
       phase: 'lobby',
       roundsPlayed: 0,
+      doublePending: false,
+      plannedRounds:
+        typeof body.plannedRounds === 'number' && body.plannedRounds > 0
+          ? Math.min(Math.floor(body.plannedRounds), MYSTERIES.length)
+          : null,
     };
     this.queue = shuffle(MYSTERIES.map((m) => m.id));
     await this.persist();
@@ -533,6 +555,25 @@ export class EventRoom extends DurableObject<Env> {
       case 'next_round':
         await this.startRound(ws, msg.mysteryId);
         return;
+      case 'set_double': {
+        if (!this.meta) return;
+        // Only between rounds (the intro counts - nobody has answered yet).
+        // Flipping it mid-clue would retroactively change what an already
+        // locked-in answer is worth.
+        const live = this.meta.phase === 'round' && this.round?.status !== 'intro';
+        if (live) {
+          send(ws, {
+            type: 'error',
+            code: 'round_running',
+            message: 'Arm double points between mysteries.',
+          });
+          return;
+        }
+        this.meta.doublePending = msg.enabled ?? !this.meta.doublePending;
+        await this.persist();
+        this.broadcast();
+        return;
+      }
       case 'pause':
         await this.pauseRound();
         return;
@@ -603,6 +644,12 @@ export class EventRoom extends DurableObject<Env> {
     const mystery = getMystery(mysteryId)!;
     const now = Date.now();
 
+    // A planned final mystery arms itself, so the host cannot forget the one
+    // thing keeping the room in play. An explicit arming still wins.
+    const isPlannedFinal =
+      this.meta.plannedRounds !== null && this.meta.roundsPlayed + 1 === this.meta.plannedRounds;
+    const multiplier = this.meta.doublePending || isPlannedFinal ? DOUBLE_MULTIPLIER : 1;
+
     // Freeze the standings now so the post-round leaderboard can show movement.
     this.previousRanks = Object.fromEntries(this.rankings().map((e) => [e.playerId, e.rank]));
 
@@ -614,6 +661,7 @@ export class EventRoom extends DurableObject<Env> {
       roundIndex: this.meta.roundsPlayed + 1,
       status: 'intro',
       startedAt: now,
+      pointsMultiplier: multiplier,
       currentClue: 0,
       clueStartedAt: now,
       clueEndsAt: now + INTRO_DURATION_MS,
@@ -624,6 +672,8 @@ export class EventRoom extends DurableObject<Env> {
       answers: {},
     };
     this.lastResult = null;
+    // Disarm on commit, so one arming can only ever buy one double round.
+    this.meta.doublePending = false;
     this.meta.phase = 'round';
 
     await this.persist();
@@ -636,6 +686,7 @@ export class EventRoom extends DurableObject<Env> {
         mysteryId: mystery.id,
         roundIndex: this.round.roundIndex,
         startedAt: now,
+        pointsMultiplier: this.round.pointsMultiplier,
       }),
     );
     this.syncPhaseToD1();
@@ -731,16 +782,25 @@ export class EventRoom extends DurableObject<Env> {
       // nothing about timing may reach a client mid-round.
       player.totalResponseMs += answer?.isCorrect ? answer.responseMs : MAX_RESPONSE_MS;
 
+      let basePoints = 0;
+      let bonus = 0;
       if (answer) {
-        player.score += answer.pointsAwarded;
-        player.lastRoundPoints = answer.pointsAwarded;
+        // pointsAwarded on the AnswerRecord is the clue value, fixed at
+        // submission from the server's clue number. The bonus and the
+        // multiplier are derived here, at round end, from state the client
+        // cannot touch - which is also what keeps them hidden until now.
+        basePoints = answer.pointsAwarded;
         if (answer.isCorrect) {
           player.correctAnswers += 1;
           player.streak += 1;
           player.bestStreak = Math.max(player.bestStreak, player.streak);
+          bonus = streakBonus(player.streak);
         } else {
           player.streak = 0;
         }
+        const total = (basePoints + bonus) * round.pointsMultiplier;
+        player.score += total;
+        player.lastRoundPoints = total;
         archivedAnswers.push({
           roundId: round.roundId,
           playerId: player.id,
@@ -749,6 +809,8 @@ export class EventRoom extends DurableObject<Env> {
           clueNumber: answer.clueNumber,
           isCorrect: answer.isCorrect,
           pointsAwarded: answer.pointsAwarded,
+          bonusPoints: bonus,
+          multiplier: round.pointsMultiplier,
           responseMs: answer.responseMs,
         });
       } else {
@@ -762,7 +824,11 @@ export class EventRoom extends DurableObject<Env> {
         selectedOption: answer?.selectedOption ?? null,
         isCorrect: answer?.isCorrect ?? false,
         clueNumber: answer?.clueNumber ?? null,
-        pointsAwarded: answer?.pointsAwarded ?? 0,
+        basePoints,
+        streakBonus: bonus,
+        multiplier: round.pointsMultiplier,
+        streakAfter: player.streak,
+        pointsAwarded: player.lastRoundPoints,
       });
     }
 
@@ -821,6 +887,7 @@ export class EventRoom extends DurableObject<Env> {
     this.lastResult = null;
     this.previousRanks = {};
     this.meta.roundsPlayed = 0;
+    this.meta.doublePending = false;
     this.meta.phase = 'lobby';
     this.queue = shuffle(MYSTERIES.map((m) => m.id));
 
@@ -875,6 +942,23 @@ export class EventRoom extends DurableObject<Env> {
    * at the full rate. Without that, joining late would be an advantage on the
    * tiebreak: fewer rounds played means less accumulated time.
    */
+  /**
+   * What the next round would score at. Armed explicitly by the host, or
+   * implicitly when the planned final mystery is the one coming up.
+   */
+  private nextRoundMultiplier(): number {
+    if (!this.meta) return 1;
+    if (this.meta.doublePending) return DOUBLE_MULTIPLIER;
+    if (this.meta.plannedRounds === null) return 1;
+    // A round still in flight has not incremented roundsPlayed yet, so the
+    // next one to *start* is two ahead, not one. Without this the console
+    // would go on claiming the next round is double all the way through the
+    // double round itself.
+    const inFlight = this.meta.phase === 'round' && this.round !== null && this.round.status !== 'ended';
+    const nextIndex = this.meta.roundsPlayed + (inFlight ? 2 : 1);
+    return nextIndex === this.meta.plannedRounds ? DOUBLE_MULTIPLIER : 1;
+  }
+
   private tiebreakMs(p: PlayerRecord): number {
     const missed = Math.max(0, (this.meta?.roundsPlayed ?? 0) - p.mysteriesPlayed);
     return p.totalResponseMs + missed * MAX_RESPONSE_MS;
@@ -963,6 +1047,7 @@ export class EventRoom extends DurableObject<Env> {
       clueStartedAt: round.clueStartedAt,
       clueEndsAt: round.clueEndsAt,
       durationPerClue: CLUE_DURATION_MS,
+      pointsMultiplier: round.pointsMultiplier,
       windowMs: round.windowMs,
       remainingMs,
       acceptingAnswers: round.status === 'active',
@@ -996,6 +1081,8 @@ export class EventRoom extends DurableObject<Env> {
       roundsPlayed: meta.roundsPlayed,
       mysteriesRemaining: this.queue.length,
       totalMysteries: MYSTERIES.length,
+      nextRoundMultiplier: this.nextRoundMultiplier(),
+      plannedRounds: meta.plannedRounds,
       serverTime: Date.now(),
     };
   }

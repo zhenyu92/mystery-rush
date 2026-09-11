@@ -42,6 +42,26 @@ export function pointsForClue(clueNumber: number): number {
   return CLUE_POINTS[clueNumber - 1] ?? 0;
 }
 
+export const STREAK_BONUS_STEP = 100;
+export const STREAK_BONUS_MAX = 200;
+
+/**
+ * Bonus XP for a correct answer that extends a streak to `streak`.
+ * Two in a row is +100, three or more is +200, one miss resets it.
+ *
+ * Flat and capped rather than a multiplier on purpose. A multiplier scales
+ * with the base, so it would pay the leader (who answers early, for 500)
+ * more than the chaser (who answers on clue 4, for 200) - the wrong shape
+ * for a game that wants to stay live to the last question. The cap also
+ * keeps the arithmetic doable on a projector.
+ */
+export function streakBonus(streak: number): number {
+  return streak < 2 ? 0 : Math.min(STREAK_BONUS_MAX, (streak - 1) * STREAK_BONUS_STEP);
+}
+
+/** What a double-points round multiplies the whole round's XP by. */
+export const DOUBLE_MULTIPLIER = 2;
+
 export interface Mystery {
   id: string;
   type: string;
@@ -85,6 +105,8 @@ export interface PublicRound {
   /** Server epoch ms when the current clue expires. */
   clueEndsAt: number;
   durationPerClue: number;
+  /** 2 on a double-points round, otherwise 1. Public - it leaks nothing. */
+  pointsMultiplier: number;
   /**
    * Length of the window currently running - the intro is shorter than a
    * clue. The countdown ring fills against this, not `durationPerClue`.
@@ -108,6 +130,13 @@ export interface PlayerRoundResult {
   selectedOption: string | null;
   isCorrect: boolean;
   clueNumber: number | null;
+  /** Clue points before any bonus or multiplier. */
+  basePoints: number;
+  streakBonus: number;
+  multiplier: number;
+  /** The player's streak after this round resolved. */
+  streakAfter: number;
+  /** The grand total actually banked: (basePoints + streakBonus) * multiplier. */
   pointsAwarded: number;
 }
 
@@ -192,6 +221,14 @@ export interface Snapshot {
   roundsPlayed: number;
   mysteriesRemaining: number;
   totalMysteries: number;
+  /**
+   * What the *next* round will multiply by. Teased on the projector during
+   * the leaderboard - someone 800 behind needs to know the gap can be closed
+   * before the round starts, not after.
+   */
+  nextRoundMultiplier: number;
+  /** How many mysteries the host planned, if they said up front. */
+  plannedRounds: number | null;
   /** Server epoch ms at the moment the snapshot was built. */
   serverTime: number;
 }
@@ -219,6 +256,7 @@ export type ServerMessage =
   | { type: 'error'; code: string; message: string };
 
 export type HostAction =
+  | 'set_double'
   | 'start_round'
   | 'pause'
   | 'resume'
@@ -232,7 +270,14 @@ export type HostAction =
 export type ClientMessage =
   | { type: 'ping'; clientTime: number }
   | { type: 'submit_answer'; option: string }
-  | { type: 'host'; action: HostAction; mysteryId?: string; playerId?: string };
+  | {
+      type: 'host';
+      action: HostAction;
+      mysteryId?: string;
+      playerId?: string;
+      /** For `set_double`. Omit to toggle. */
+      enabled?: boolean;
+    };
 
 export const NICKNAME_MAX = 18;
 export const EVENT_NAME_MAX = 48;

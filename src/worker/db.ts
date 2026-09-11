@@ -31,7 +31,10 @@ export interface ArchivedAnswer {
   submittedAt: number;
   clueNumber: number;
   isCorrect: boolean;
+  /** The clue value alone. Add the bonus, then apply the multiplier. */
   pointsAwarded: number;
+  bonusPoints: number;
+  multiplier: number;
   responseMs: number;
 }
 
@@ -119,17 +122,24 @@ export async function upsertPlayer(db: D1Database, eventCode: string, p: Archive
 
 export async function recordRoundStart(
   db: D1Database,
-  row: { id: string; eventCode: string; mysteryId: string; roundIndex: number; startedAt: number },
+  row: {
+    id: string;
+    eventCode: string;
+    mysteryId: string;
+    roundIndex: number;
+    startedAt: number;
+    pointsMultiplier: number;
+  },
 ): Promise<void> {
   await quiet(
     'recordRoundStart',
     db
       .prepare(
-        `INSERT INTO rounds (id, event_code, mystery_id, round_index, status, started_at)
-         VALUES (?, ?, ?, ?, 'active', ?)
+        `INSERT INTO rounds (id, event_code, mystery_id, round_index, points_multiplier, status, started_at)
+         VALUES (?, ?, ?, ?, ?, 'active', ?)
          ON CONFLICT (id) DO NOTHING`,
       )
-      .bind(row.id, row.eventCode, row.mysteryId, row.roundIndex, row.startedAt)
+      .bind(row.id, row.eventCode, row.mysteryId, row.roundIndex, row.pointsMultiplier, row.startedAt)
       .run(),
   );
 }
@@ -154,8 +164,9 @@ export async function recordRoundEnd(
 
   const answerStmt = db.prepare(
     `INSERT INTO answers
-       (round_id, player_id, event_code, selected_option, submitted_at, clue_number, is_correct, points_awarded, response_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (round_id, player_id, event_code, selected_option, submitted_at, clue_number, is_correct,
+        points_awarded, bonus_points, multiplier, response_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (round_id, player_id) DO NOTHING`,
   );
   for (const a of answers) {
@@ -169,6 +180,8 @@ export async function recordRoundEnd(
         a.clueNumber,
         a.isCorrect ? 1 : 0,
         a.pointsAwarded,
+        a.bonusPoints,
+        a.multiplier,
         a.responseMs,
       ),
     );

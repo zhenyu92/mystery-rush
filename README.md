@@ -63,7 +63,22 @@ from the fastest round trip, so a phone with a badly set clock still sees the ri
 ### Scoring, and how a tie is broken
 
 Points come from the clue number the server had open when the submission
-arrived: 500, 400, 300, 200, 100.
+arrived: 500, 400, 300, 200, 100. Two rules sit on top, each deliberately
+sayable in one sentence:
+
+- **Streaks pay.** Two correct in a row is **+100**, three or more in a row is
+  **+200**, and one miss resets it. Flat and capped rather than a multiplier on
+  purpose: a multiplier scales with the base, so it would pay the leader (who
+  answers early, for 500) more than the chaser (who answers on clue 4, for 200)
+  — the wrong shape for a game that should stay live to the last question.
+- **The final mystery scores double.** Tell the host how many mysteries you plan
+  to run when creating the event and the last one arms itself, so it cannot be
+  forgotten; there is also a manual toggle. It is announced *before* the round,
+  because someone 800 behind needs to know the gap can still be closed.
+
+Both are applied at round end as `(base + streakBonus) × multiplier`, never at
+submission — which is what keeps a player from inferring they were right by
+watching their own XP move.
 
 Equal scores are separated by **total time to solve**, accumulated across the
 event. The clock is virtual and starts when clue 1 opens:

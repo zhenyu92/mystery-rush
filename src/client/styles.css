@@ -1578,3 +1578,19 @@ p {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Scoring breakdown under a verdict: the streak bonus and any multiplier
+   have to land in the same beat as "Correct!", not as a footnote. */
+.verdict__breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.verdict__bonus {
+  color: var(--gold);
+}

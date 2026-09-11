@@ -198,9 +198,14 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
           <h2 className="title-xl intro__title">{round.title}</h2>
           <div className="intro__count">{countdown.seconds}</div>
           <div className="timer__label">First clue in</div>
+          {round.pointsMultiplier > 1 ? (
+            <div className="pill pill--streak intro__hint" style={{ fontSize: 15 }}>
+              {'⚡'} DOUBLE POINTS {'·'} everything this round counts twice
+            </div>
+          ) : null}
           <p className="intro__hint tiny" style={{ maxWidth: 320 }}>
-            Clue 1 is worth {CLUE_POINTS[0]} XP. Every clue after that is worth less, so the moment you
-            are sure, lock it in.
+            Clue 1 is worth {CLUE_POINTS[0] * round.pointsMultiplier} XP. Every clue after that is worth
+            less, so the moment you are sure, lock it in.
           </p>
         </div>
       ) : null}
@@ -228,7 +233,10 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
                 <div className="timer__label">
                   {round.status === 'paused' ? 'Paused by host' : 'Answer now for'}
                 </div>
-                <div className="timer__worth">{CLUE_POINTS[round.currentClue - 1]} XP</div>
+                <div className="timer__worth">
+                  {CLUE_POINTS[round.currentClue - 1] * round.pointsMultiplier} XP
+                  {round.pointsMultiplier > 1 ? <span className="verdict__bonus"> {'⚡'} DOUBLE</span> : null}
+                </div>
                 <div className="tiny dim">
                   Clue {round.currentClue} of {round.clueCount} {'·'}{' '}
                   {round.status === 'paused'
@@ -282,7 +290,9 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
                   send({ type: 'submit_answer', option: choice });
                 }}
               >
-                {pending ? 'Locking in...' : `Lock in for ${CLUE_POINTS[round.currentClue - 1]} XP`}
+                {pending
+                  ? 'Locking in...'
+                  : `Lock in for ${CLUE_POINTS[round.currentClue - 1] * round.pointsMultiplier} XP`}
               </button>
               <p className="tiny dim center" style={{ margin: 0 }}>
                 One guess per mystery. You cannot change it, so make it count.
@@ -314,9 +324,24 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
               <div className="verdict__emoji">{'\u{1F389}'}</div>
               <div className="verdict__title">Correct!</div>
               <div className="verdict__points">+{myResult.pointsAwarded} XP</div>
+              {myResult.streakBonus > 0 || myResult.multiplier > 1 ? (
+                <div className="verdict__breakdown">
+                  <span>{myResult.basePoints} for clue {myResult.clueNumber}</span>
+                  {myResult.streakBonus > 0 ? (
+                    <span className="verdict__bonus">
+                      {'\u{1F525}'} +{myResult.streakBonus} streak
+                    </span>
+                  ) : null}
+                  {myResult.multiplier > 1 ? (
+                    <span className="verdict__bonus">
+                      {'⚡'} {'×'}{myResult.multiplier} double round
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="verdict__sub">
                 Nailed it on clue {myResult.clueNumber}
-                {(self?.streak ?? 0) > 1 ? ` · \u{1F525} ${self?.streak} in a row` : ''}
+                {myResult.streakAfter > 1 ? ` · \u{1F525} ${myResult.streakAfter} in a row` : ''}
               </div>
             </div>
           ) : (

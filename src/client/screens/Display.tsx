@@ -126,6 +126,11 @@ function Stage({ code }: { code: string }) {
           <h1 className="winner__name intro__title" style={{ fontSize: 'clamp(38px, 7vw, 96px)' }}>
             {round.title}
           </h1>
+          {round.pointsMultiplier > 1 ? (
+            <div className="pill pill--streak intro__type" style={{ fontSize: 'clamp(15px, 1.8vw, 26px)', padding: '12px 26px' }}>
+              {'⚡'} DOUBLE POINTS {'·'} everything counts twice
+            </div>
+          ) : null}
           <div className="intro__count intro__count--xl">{countdown.seconds}</div>
           <div className="brand__tag intro__hint">First clue in</div>
         </div>
@@ -143,8 +148,13 @@ function Stage({ code }: { code: string }) {
                 Clue {round.currentClue} of {round.clueCount}
               </span>
               <span className="pill pill--xp" style={{ fontSize: 15, padding: '8px 16px' }}>
-                {CLUE_POINTS[round.currentClue - 1]} XP
+                {CLUE_POINTS[round.currentClue - 1] * round.pointsMultiplier} XP
               </span>
+              {round.pointsMultiplier > 1 ? (
+                <span className="pill pill--streak" style={{ fontSize: 15, padding: '8px 16px' }}>
+                  {'⚡'} DOUBLE POINTS
+                </span>
+              ) : null}
             </div>
 
             <p className="stage__clue">
@@ -226,6 +236,17 @@ function Stage({ code }: { code: string }) {
           <div className="stage__lb" style={{ width: '100%', maxWidth: 1000, margin: '0 auto' }}>
             <Leaderboard entries={snapshot.leaderboard} limit={10} showGains />
           </div>
+          {/* Someone 800 behind needs to know the gap can still be closed
+              before the round starts, not after it. */}
+          {snapshot.nextRoundMultiplier > 1 ? (
+            <div className="pill pill--streak" style={{ fontSize: 'clamp(16px, 2vw, 30px)', padding: '14px 30px' }}>
+              {'⚡'} Next up:{' '}
+              {snapshot.plannedRounds !== null && snapshot.roundsPlayed + 1 === snapshot.plannedRounds
+                ? 'FINAL MYSTERY'
+                : 'DOUBLE POINTS'}{' '}
+              {'·'} everything counts twice
+            </div>
+          ) : null}
         </div>
       ) : null}
 

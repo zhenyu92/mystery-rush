@@ -10,7 +10,9 @@ import {
   CLUE_DURATION_MS,
   CLUE_POINTS,
   INTRO_DURATION_MS,
+  DOUBLE_MULTIPLIER,
   MAX_RESPONSE_MS,
+  streakBonus,
 } from '../src/shared/types.ts';
 
 const HOST = process.argv[2] ?? '127.0.0.1:8787';
@@ -205,6 +207,19 @@ check('round ended when the last unanswered player left', endedOnDisconnect);
 check('absent player scored zero',
   pb.last.snapshot.leaderboard.find((e) => e.nickname === 'Cara').lastRoundPoints === 0);
 
+// Alice has now answered correctly twice running, so the streak should pay.
+const aliceR2 = pb.last.snapshot.result.players.find((r) => r.nickname === 'Alice');
+check('streak is reported on the result', aliceR2.streakAfter === 2, `got ${aliceR2.streakAfter}`);
+check(`two in a row pays +${streakBonus(2)}`, aliceR2.streakBonus === streakBonus(2),
+  `got ${aliceR2.streakBonus}`);
+check('the breakdown adds up',
+  aliceR2.pointsAwarded === (aliceR2.basePoints + aliceR2.streakBonus) * aliceR2.multiplier,
+  `${aliceR2.basePoints}+${aliceR2.streakBonus} x${aliceR2.multiplier} != ${aliceR2.pointsAwarded}`);
+check('an ordinary round has no multiplier', aliceR2.multiplier === 1);
+const bobR2 = pb.last.snapshot.result.players.find((r) => r.nickname === 'Bob');
+check('a wrong answer last round reset the streak to 1, not 2', bobR2.streakAfter === 1,
+  `got ${bobR2.streakAfter}`);
+
 // ------------------------------------------------- round 2b: late arrival
 console.log('=== 7b. A mid-round arrival does not hold the room hostage ===');
 send(host, { type: 'host', action: 'next_round' });
@@ -257,6 +272,12 @@ check(
 );
 check('all clients advanced together', pc.last?.snapshot.round.currentClue === 2);
 
+host.errors.length = 0;
+send(host, { type: 'host', action: 'set_double', enabled: true });
+await sleep(600);
+check('arming double mid-clue is refused', host.errors.some((e) => e.code === 'round_running'));
+check('and the live round is unaffected', pb.last.snapshot.round.pointsMultiplier === 1);
+
 console.log('  (pausing 4s to confirm the clock freezes)');
 send(host, { type: 'host', action: 'pause' });
 await waitFor(pb, (s) => s.round?.status === 'paused', 3000, 'pause');
@@ -308,6 +329,39 @@ send(host, { type: 'host', action: 'kick_player', playerId: bob.playerId });
 await sleep(900);
 check('player removed', pc.last.snapshot.players.every((p) => p.nickname !== 'Bob'));
 check('their socket closed', pb.closed);
+
+// --------------------------------------------------- a planned final round
+console.log('=== 10. A planned final mystery arms itself for double points ===');
+const ev2 = await post('/api/events', { eventName: 'Double Test', plannedRounds: 1 });
+check('plannedRounds is accepted', ev2.body.plannedRounds === 1, JSON.stringify(ev2.body));
+const CODE2 = ev2.body.eventCode;
+const zoe = (await post(`/api/events/${CODE2}/join`, { nickname: 'Zoe' })).body;
+const h2 = connect(`code=${CODE2}&role=host&hostToken=${ev2.body.hostToken}`);
+const pz = connect(`code=${CODE2}&role=player&playerId=${zoe.playerId}&playerToken=${zoe.playerToken}`);
+await Promise.all([waitOpen(h2), waitOpen(pz)]);
+await sleep(600);
+check('the only planned mystery is armed before it starts',
+  pz.last?.snapshot.nextRoundMultiplier === DOUBLE_MULTIPLIER,
+  `got ${pz.last?.snapshot.nextRoundMultiplier}`);
+
+send(h2, { type: 'host', action: 'start_round' });
+await waitFor(pz, (s) => s.phase === 'round', 4000, 'double round');
+await waitUntil(() => h2.briefs.length >= 1, 5000, 'double brief');
+check('the round committed the multiplier',
+  pz.last?.snapshot.round.pointsMultiplier === DOUBLE_MULTIPLIER);
+check('and it disarmed once committed', pz.last?.snapshot.nextRoundMultiplier === 1,
+  `got ${pz.last?.snapshot.nextRoundMultiplier}`);
+
+await waitFor(pz, (s) => s.round?.currentClue === 1, INTRO_DURATION_MS + 5000, 'double clue 1');
+send(pz, { type: 'submit_answer', option: h2.briefs[0].answer });
+await waitFor(pz, (s) => s.phase === 'results', 8000, 'double results');
+const zoeResult = pz.last.snapshot.result.players.find((r) => r.nickname === 'Zoe');
+check(`clue 1 scored ${CLUE_POINTS[0] * DOUBLE_MULTIPLIER} on a double round`,
+  zoeResult.pointsAwarded === CLUE_POINTS[0] * DOUBLE_MULTIPLIER, `got ${zoeResult.pointsAwarded}`);
+check('the base stays the plain clue value', zoeResult.basePoints === CLUE_POINTS[0]);
+check('the leaderboard shows the doubled total',
+  pz.last.snapshot.leaderboard[0].score === CLUE_POINTS[0] * DOUBLE_MULTIPLIER);
+[h2, pz].forEach((c) => { try { c.ws.close(); } catch {} });
 
 console.log(`\n================  ${pass} passed, ${fail} failed  ================\n`);
 [host, pa, pb, pc, disp].forEach((s) => { try { s.ws.close(); } catch {} });

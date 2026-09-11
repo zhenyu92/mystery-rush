@@ -32,6 +32,7 @@ function CreateEvent({
   attemptedCode: string;
 }) {
   const [eventName, setEventName] = useState('Annual Dinner Mystery Rush');
+  const [plannedRounds, setPlannedRounds] = useState('8');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resumable, setResumable] = useState<{ code: string; eventName: string } | null>(null);
@@ -49,7 +50,11 @@ function CreateEvent({
     setBusy(true);
     setError(null);
     try {
-      const created = await api.createEvent(eventName.trim() || 'Mystery Rush Night');
+      const planned = Number.parseInt(plannedRounds, 10);
+      const created = await api.createEvent(
+        eventName.trim() || 'Mystery Rush Night',
+        Number.isFinite(planned) && planned > 0 ? planned : null,
+      );
       session.saveHost({
         eventCode: created.eventCode,
         hostToken: created.hostToken,
@@ -95,6 +100,24 @@ function CreateEvent({
             autoFocus
           />
           <span className="tiny dim">Shown on every player's phone and on the projector.</span>
+        </div>
+        <div className="field">
+          <label className="field__label" htmlFor="plannedRounds">
+            How many mysteries?
+          </label>
+          <input
+            id="plannedRounds"
+            className="input"
+            type="number"
+            min={1}
+            max={25}
+            value={plannedRounds}
+            onChange={(e) => setPlannedRounds(e.target.value)}
+          />
+          <span className="tiny dim">
+            The last one automatically scores double, so the room stays in play to the end. Leave
+            blank if you would rather decide as you go.
+          </span>
         </div>
         <button className="btn btn--primary btn--lg btn--block" disabled={busy}>
           {busy ? 'Creating...' : 'Create event and get a code'}
@@ -225,6 +248,9 @@ function HostConsole({
   const answered = round?.answeredCount ?? 0;
   const total = round?.playerCount ?? snapshot?.players.length ?? 0;
   const liveBrief = hostBrief && round && hostBrief.roundId === round.roundId ? hostBrief : null;
+  const doubleArmed = (snapshot?.nextRoundMultiplier ?? 1) > 1;
+  const isFinalPlanned =
+    snapshot?.plannedRounds != null && snapshot.roundsPlayed + 1 === snapshot.plannedRounds;
 
   return (
     <div className="page page--wide">
@@ -294,6 +320,7 @@ function HostConsole({
                 </span>
                 <span className="pill pill--live">
                   <span className="dot dot--pulse" /> Mystery {round.roundIndex} live
+                  {round.pointsMultiplier > 1 ? ` · ⚡ ${round.pointsMultiplier}x` : ''}
                 </span>
               </div>
 
@@ -432,9 +459,22 @@ function HostConsole({
                 </>
               ) : (
                 <button className="btn btn--go btn--lg btn--block" onClick={startRound}>
-                  {snapshot && snapshot.roundsPlayed > 0 ? '▶ Next mystery' : '▶ Start game'}
+                  {doubleArmed
+                    ? '▶ Start DOUBLE mystery'
+                    : snapshot && snapshot.roundsPlayed > 0
+                      ? '▶ Next mystery'
+                      : '▶ Start game'}
                 </button>
               )}
+
+              {phase !== 'round' ? (
+                <button
+                  className={doubleArmed ? 'btn btn--danger' : 'btn btn--ghost'}
+                  onClick={() => send({ type: 'host', action: 'set_double', enabled: !doubleArmed })}
+                >
+                  {'⚡'} Double points: {doubleArmed ? 'ARMED' : 'off'}
+                </button>
+              ) : null}
 
               {phase === 'results' ? (
                 <button className="btn btn--cyan" onClick={() => act('show_leaderboard')}>
@@ -451,8 +491,9 @@ function HostConsole({
 
             {phase !== 'round' ? (
               <p className="tiny dim" style={{ margin: 0 }}>
-                Clues advance on their own every {(round?.durationPerClue ?? 20000) / 1000} seconds - you
-                never need to click through them. Pause freezes the clock for the whole room.
+                {isFinalPlanned
+                  ? `This is mystery ${snapshot?.plannedRounds} of ${snapshot?.plannedRounds} - the last one, so it armed double points itself. Tell the room before you start it.`
+                  : 'Clues advance on their own - you never need to click through them. Pause freezes the clock for the whole room.'}
               </p>
             ) : null}
 

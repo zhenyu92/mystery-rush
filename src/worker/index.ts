@@ -77,8 +77,14 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   // POST /api/events - create an event and mint the host credential.
   if (path === '/api/events' && request.method === 'POST') {
-    const body = await readJson<{ eventName?: string }>(request);
+    const body = await readJson<{ eventName?: string; plannedRounds?: number }>(request);
     const eventName = sanitizeText(body?.eventName, EVENT_NAME_MAX, 'Mystery Rush Night');
+    // How many mysteries the host intends to run. Lets the room be told which
+    // one is the last, and auto-arms it for double points.
+    const plannedRounds =
+      typeof body?.plannedRounds === 'number' && body.plannedRounds > 0
+        ? Math.min(Math.floor(body.plannedRounds), MYSTERIES.length)
+        : null;
     const hostToken = newToken();
 
     const code = await allocateCode(env);
@@ -86,12 +92,12 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       new Request('https://room/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ eventCode: code, eventName, hostToken }),
+        body: JSON.stringify({ eventCode: code, eventName, hostToken, plannedRounds }),
       }),
     );
     if (!res.ok) return json({ error: 'init_failed', message: 'Could not create the event.' }, 500);
 
-    return json({ eventCode: code, eventName, hostToken }, 201);
+    return json({ eventCode: code, eventName, hostToken, plannedRounds }, 201);
   }
 
   const match = path.match(/^\/api\/events\/([^/]+)(\/join)?$/);

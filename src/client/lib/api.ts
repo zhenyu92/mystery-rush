@@ -34,6 +34,7 @@ export interface CreatedEvent {
   eventCode: string;
   eventName: string;
   hostToken: string;
+  plannedRounds: number | null;
 }
 
 export interface JoinedEvent {
@@ -46,8 +47,11 @@ export interface JoinedEvent {
 }
 
 export const api = {
-  createEvent: (eventName: string) =>
-    request<CreatedEvent>('/api/events', { method: 'POST', body: JSON.stringify({ eventName }) }),
+  createEvent: (eventName: string, plannedRounds: number | null) =>
+    request<CreatedEvent>('/api/events', {
+      method: 'POST',
+      body: JSON.stringify({ eventName, plannedRounds }),
+    }),
 
   lookupEvent: (code: string) =>
     request<{ exists: boolean; eventName: string | null }>(`/api/events/${encodeURIComponent(code)}`),
