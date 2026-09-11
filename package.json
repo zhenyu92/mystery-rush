@@ -9,6 +9,8 @@
     "dev:worker": "wrangler dev --port 8787",
     "dev:client": "vite",
     "build": "vite build",
+    "test": "node --test --import=./test/support/register.mjs 'test/**/*.test.ts'",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='src/worker/**' --test-coverage-include='src/shared/**' --import=./test/support/register.mjs 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
     "preview": "npm run build && wrangler dev --port 8787",
     "db:init:local": "wrangler d1 execute mystery-rush-db --local --file=./schema.sql",
