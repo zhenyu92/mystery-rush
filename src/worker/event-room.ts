@@ -24,8 +24,10 @@ import {
   EVENT_NAME_MAX,
   INTRO_DURATION_MS,
   isDifficulty,
+  isMysteryType,
   LEADERBOARD_AUTO_MS,
   MAX_RESPONSE_MS,
+  MYSTERY_TYPES,
   POOL_DEADLINE_MS,
   RESULTS_AUTO_MS,
   RESPONSE_BUCKET_MS,
@@ -73,6 +75,7 @@ import {
   type ArchivedPlayer,
   type Env,
 } from './db';
+import { hasErrors, validateMystery } from './mystery-validation';
 
 interface EventMeta {
   eventCode: string;
@@ -252,6 +255,27 @@ export class EventRoom extends DurableObject<Env> {
     return [...MYSTERIES, ...Object.values(this.library)];
   }
 
+  /**
+   * The play order for a fresh event.
+   *
+   * Shuffled, but a host who named categories gets those first. The built-in
+   * bank is the fallback when the written pool comes up short, and falling
+   * back should mean "a question we did not write", not "a question about
+   * something you did not ask for" - the host console promises the room will
+   * not be able to tell, so the order has to keep that promise as far as the
+   * bank allows. Off-topic mysteries stay queued behind, because running out
+   * of questions entirely is worse than drifting off the brief.
+   */
+  private seedQueue(): string[] {
+    const all = shuffle(this.allMysteries());
+    const chosen = new Set((this.meta?.poolCategories ?? []).filter(isMysteryType));
+    if (chosen.size === 0) return all.map((m) => m.id);
+    return [
+      ...all.filter((m) => chosen.has(m.type)),
+      ...all.filter((m) => !chosen.has(m.type)),
+    ].map((m) => m.id);
+  }
+
   private async persist(): Promise<void> {
     if (!this.meta) return;
     await this.ctx.storage.put('state', {
@@ -370,7 +394,7 @@ export class EventRoom extends DurableObject<Env> {
           ? Math.min(Math.floor(body.plannedRounds), MYSTERIES.length)
           : null,
     };
-    this.queue = shuffle(this.allMysteries().map((m) => m.id));
+    this.queue = this.seedQueue();
     await this.persist();
 
     this.ctx.waitUntil(
@@ -564,24 +588,37 @@ export class EventRoom extends DurableObject<Env> {
 
   /** Why this mystery cannot be taken in, or null if it can. */
   private rejectMystery(m: Mystery | undefined): Response | null {
-    const shapeOk =
-      m !== undefined &&
-      typeof m.id === 'string' &&
-      typeof m.type === 'string' &&
-      typeof m.title === 'string' &&
-      typeof m.answer === 'string' &&
-      Array.isArray(m.options) &&
-      m.options.length >= 2 &&
-      m.options.includes(m.answer) &&
-      Array.isArray(m.clues) &&
-      m.clues.length === CLUE_COUNT &&
-      m.clues.every((c) => typeof c === 'string' && c.length > 0);
-    if (!shapeOk) return json({ error: 'bad_mystery' }, 400);
+    // The same rules the generated pool is held to. This is the boundary
+    // where content becomes playable, and it is reachable by anything
+    // holding the host token - so a shape check alone is not enough: it
+    // would wave through two options, a one-character clue or a category
+    // nobody asked for, and put them at the front of the queue.
+    const issues = validateMystery(m, { allowedCategories: this.allowedCategories() });
+    if (hasErrors(issues)) {
+      return json(
+        {
+          error: 'bad_mystery',
+          message: issues.find((i) => i.severity === 'error')!.message,
+          issues,
+        },
+        400,
+      );
+    }
 
     if (Object.keys(this.library).length >= 60) {
       return json({ error: 'library_full', message: 'This event already has plenty of mysteries.' }, 409);
     }
     return null;
+  }
+
+  /**
+   * Which categories a mystery may belong to. The host's own choice when they
+   * made one; otherwise every category the game knows, because an open-ended
+   * event never narrowed the subject in the first place.
+   */
+  private allowedCategories(): string[] {
+    const chosen = (this.meta?.poolCategories ?? []).filter(isMysteryType);
+    return chosen.length > 0 ? chosen : MYSTERY_TYPES;
   }
 
   /** Make one mystery playable in this event. Shape already checked. */
@@ -1205,7 +1242,7 @@ export class EventRoom extends DurableObject<Env> {
     this.previousRanks = {};
     this.meta.roundsPlayed = 0;
     this.meta.phase = 'lobby';
-    this.queue = shuffle(this.allMysteries().map((m) => m.id));
+    this.queue = this.seedQueue();
 
     await this.cancelSchedule();
     this.ctx.waitUntil(resetEventRows(this.env.DB, this.meta.eventCode));

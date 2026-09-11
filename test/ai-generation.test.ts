@@ -297,12 +297,14 @@ describe('AI mystery generation', () => {
   // ------------------------------------------------------------ the API
 
   describe('POST /api/events/:code/mysteries', () => {
-    async function createEvent(): Promise<{ code: string; hostToken: string }> {
+    async function createEvent(
+      over: Record<string, unknown> = {},
+    ): Promise<{ code: string; hostToken: string }> {
       const res = await worker.fetch(
         new Request('https://x/api/events', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ eventName: 'AI Test' }),
+          body: JSON.stringify({ eventName: 'AI Test', ...over }),
         }),
         env,
       );
@@ -383,6 +385,62 @@ describe('AI mystery generation', () => {
         mystery: { ...mystery({ clues: ['only one'] }), id: 'ai_x' },
       });
       assert.equal(res.status, 400, 'the shape is re-checked after the hop');
+    });
+
+    it('refuses content the rules would have caught, not just a bad shape', async () => {
+      const { code, hostToken } = await createEvent();
+
+      // Each of these is structurally a mystery - five string clues, an
+      // answer among the options - and each one breaks a content rule that
+      // the generated pool is held to. The boundary is reachable by anything
+      // holding the host token, so it has to apply the same bar.
+      const cases: Array<[string, Record<string, unknown>]> = [
+        ['two options', { options: ['Golden Gate Bridge', 'Tower Bridge'] }],
+        ['a clue too short to be a clue', { clues: ['x', 'x', 'x', 'x', 'x'] }],
+        ['a category the game does not know', { type: 'not_a_real_category' }],
+        ['an answer that is not among the options', { answer: 'Somewhere Else' }],
+        ['markup in a clue', { clues: [
+          '<img src=x onerror=alert(1)>',
+          'I was finished in 1937.',
+          'I am painted international orange.',
+          'I span a strait, not a river.',
+          'I am the bridge at the mouth of San Francisco Bay.',
+        ] }],
+      ];
+
+      for (const [label, over] of cases) {
+        const res = await post(`/api/events/${code}/mysteries`, {
+          hostToken,
+          mystery: { ...mystery(over), id: `ai_bad_${label.replace(/\W+/g, '_')}` },
+        });
+        assert.equal(res.status, 400, `${label} must not become playable`);
+        assert.equal(((await res.json()) as { error: string }).error, 'bad_mystery');
+      }
+    });
+
+    it('judges a mystery against the categories the host actually chose', async () => {
+      const narrow = await createEvent({ categories: ['landmark'] });
+
+      const onTopic = await post(`/api/events/${narrow.code}/mysteries`, {
+        hostToken: narrow.hostToken,
+        mystery: { ...mystery(), id: 'ai_on_topic' },
+      });
+      assert.equal(onTopic.status, 200, 'a landmark is what this host asked for');
+
+      const offTopic = await post(`/api/events/${narrow.code}/mysteries`, {
+        hostToken: narrow.hostToken,
+        mystery: { ...mystery({ type: 'food' }), id: 'ai_off_topic' },
+      });
+      assert.equal(offTopic.status, 400, 'a category the host did not ask for is not playable');
+    });
+
+    it('accepts any known category when the host narrowed nothing', async () => {
+      const open = await createEvent();
+      const res = await post(`/api/events/${open.code}/mysteries`, {
+        hostToken: open.hostToken,
+        mystery: { ...mystery({ type: 'food' }), id: 'ai_open_food' },
+      });
+      assert.equal(res.status, 200, 'an open-ended event never narrowed the subject');
     });
 
     it('makes an approved mystery playable', async () => {

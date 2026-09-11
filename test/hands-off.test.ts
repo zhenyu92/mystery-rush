@@ -20,6 +20,7 @@ import {
   streakBonus,
 } from '../src/shared/types';
 import type { Env } from '../src/worker/db';
+import { MYSTERIES } from '../src/worker/game';
 import { buildMysteryPool, meetsAutoAcceptBar } from '../src/worker/mystery-pool';
 import { createHarness, installWorkerGlobals, type Harness } from './support/env';
 import {
@@ -561,3 +562,74 @@ async function seatTableOn(
   const snapshot = () => host.client.lastOfType('snapshot')!.snapshot as Snapshot;
   return { host, snapshot, round: () => snapshot().round };
 }
+
+// ------------------------------------------------- keeping the host's brief
+
+/**
+ * The categories are the one thing the host chooses about the *content* of
+ * the night, and the console promises the room "will not be able to tell"
+ * when the written pool comes up short. That promise is only kept if the
+ * built-in bank is drawn on in the host's chosen categories first.
+ */
+describe('the categories the host chose', () => {
+  afterEach(() => releaseFakeClock());
+
+  it('draws the built-in bank on topic before it drifts', async () => {
+    useFakeClock();
+    const onTopic = MYSTERIES.filter((m) => m.type === 'landmark');
+    assert.ok(onTopic.length >= 2, 'the fixture needs a category with more than one entry');
+
+    // No AI is scripted here, so every round comes from the built-in bank -
+    // exactly the case where the promise used to break.
+    const table = await seatTable(['Ada'], {
+      plannedRounds: onTopic.length,
+      categories: ['landmark'],
+      autoAdvance: false,
+    });
+
+    const played: string[] = [];
+    for (let r = 0; r < onTopic.length; r++) {
+      await table.host.say({ type: 'host', action: 'start_round' });
+      await table.tickToAlarm();
+      played.push(table.round()!.mysteryType);
+      await table.players.Ada.socket.say({ type: 'submit_answer', option: answerFor(table.host) });
+    }
+
+    assert.deepEqual(
+      played,
+      onTopic.map(() => 'landmark'),
+      `asked for landmarks and got ${JSON.stringify(played)}`,
+    );
+  });
+
+  it('still has something to play once the chosen categories run out', async () => {
+    useFakeClock();
+    const spaceCount = MYSTERIES.filter((m) => m.type === 'space').length;
+    const table = await seatTable(['Ada'], {
+      plannedRounds: spaceCount + 1,
+      categories: ['space'],
+      autoAdvance: false,
+    });
+
+    for (let r = 0; r <= spaceCount; r++) {
+      await table.host.say({ type: 'host', action: 'start_round' });
+      await table.tickToAlarm();
+      assert.equal(table.snapshot().phase, 'round', 'running out of topic must not end the night');
+      await table.players.Ada.socket.say({ type: 'submit_answer', option: answerFor(table.host) });
+    }
+    assert.equal(table.snapshot().roundsPlayed, spaceCount + 1);
+  });
+
+  it('shuffles the whole bank when the host narrowed nothing', async () => {
+    useFakeClock();
+    const table = await seatTable(['Ada'], { plannedRounds: 4, autoAdvance: false });
+    const types = new Set<string>();
+    for (let r = 0; r < 4; r++) {
+      await table.host.say({ type: 'host', action: 'start_round' });
+      await table.tickToAlarm();
+      types.add(table.round()!.mysteryType);
+      await table.players.Ada.socket.say({ type: 'submit_answer', option: answerFor(table.host) });
+    }
+    assert.ok(types.size > 1, 'an open-ended night should range across the bank');
+  });
+});
