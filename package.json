@@ -12,6 +12,8 @@
     "test": "node --test --import=./test/support/register.mjs 'test/**/*.test.ts'",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-include='src/worker/**' --test-coverage-include='src/shared/**' --import=./test/support/register.mjs 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
+    "test:e2e": "node --experimental-strip-types --no-warnings test/e2e.mjs",
+    "test:smoke": "node --experimental-strip-types --no-warnings test/smoke.mjs",
     "preview": "npm run build && wrangler dev --port 8787",
     "db:init:local": "wrangler d1 execute mystery-rush-db --local --file=./schema.sql",
     "db:init:remote": "wrangler d1 execute mystery-rush-db --remote --file=./schema.sql",

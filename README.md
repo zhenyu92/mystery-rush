@@ -99,11 +99,23 @@ deploys — use `npm run preview` and open http://localhost:8787.
 | `npm run typecheck` | Typecheck the client and the Worker (they have separate tsconfigs). |
 | `npm test` | Run the Worker test suite. |
 | `npm run test:coverage` | The same, with a coverage report for `src/worker` and `src/shared`. |
+| `npm run test:e2e` | Drive a real game against `wrangler dev`. Slower, needs a server. |
+| `npm run test:smoke` | Short run against the live deployment. Leaves one event in D1. |
+| `npm run test:screens` | Screenshot every screen through a real browser. |
 | `npm run deploy` | Build, then `wrangler deploy`. |
 
 ---
 
 ## Tests
+
+Two layers, and they catch different things.
+
+```bash
+npm test          # fast, no server, gates the deploy
+npm run test:e2e  # slow, needs `wrangler dev`, plays a real game
+```
+
+### The unit suite
 
 ```bash
 npm test
@@ -132,6 +144,26 @@ own `fetch` handler and a real `EventRoom`.
 
 The test files are not part of either `tsconfig`: they are checked by running
 them, since typechecking them would mean adding `@types/node`.
+
+### The end-to-end suite
+
+```bash
+npm run dev       # in one terminal
+npm run test:e2e  # in another
+```
+
+[`test/e2e.mjs`](test/e2e.mjs) plays four mysteries against a running Worker over real WebSockets,
+with real twenty-second clues — the get-ready window, all three ways a round can end, the
+tiebreak, streak bonuses, a double-points round, pause, reconnect, reset and kick. It is the layer
+that catches things the stubs cannot: that a Durable Object alarm actually fires, that clue two
+lands thirty seconds after the round starts, that a dropped socket really does release the round.
+
+It imports the real constants from [`src/shared/types.ts`](src/shared/types.ts) and computes its
+expectations, so retuning the clue clock or the points table does not mean editing tests — which is
+why the script passes `--experimental-strip-types`.
+
+[`test/screens.mjs`](test/screens.mjs) drives the same game through a real browser and screenshots
+every screen into `test/screens/`. Some of this UI is only wrong in ways you have to look at.
 
 ---
 
