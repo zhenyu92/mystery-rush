@@ -97,7 +97,11 @@ export function sanitizeNickname(raw: unknown, max: number): string | null {
     .replace(INVISIBLE, '')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, max);
+    .slice(0, max)
+    // Truncating can cut in the middle of a gap and leave the space behind.
+    // A trailing space is invisible on the leaderboard but counts towards
+    // uniqueness, so two names that look identical could both be taken.
+    .trimEnd();
   return cleaned.length >= 1 ? cleaned : null;
 }
 

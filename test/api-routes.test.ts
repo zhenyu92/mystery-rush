@@ -257,6 +257,19 @@ describe('POST /api/events/:code/join', () => {
     assert.equal(reply.body.nickname.length, NICKNAME_MAX);
   });
 
+  it('does not let a truncated nickname collide invisibly with a shorter one', async () => {
+    const event = await createEvent(harness);
+    // Truncated at NICKNAME_MAX this is 'abcdefghijklmnopq', with the space
+    // the cut landed on. If the space survived, the two would be different
+    // strings that look identical side by side on the leaderboard.
+    const first = await joinEvent(harness, event.eventCode, { nickname: 'abcdefghijklmnopq rs' });
+    assert.equal(first.body.nickname, 'abcdefghijklmnopq');
+
+    const clash = await joinEvent(harness, event.eventCode, { nickname: 'abcdefghijklmnopq' });
+    assert.equal(clash.status, 409);
+    assert.equal((clash.body as unknown as { error: string }).error, 'nickname_taken');
+  });
+
   it('404s a join against an event that does not exist', async () => {
     const reply = await joinEvent(harness, 'ZZZZZ', { nickname: 'Ada' });
     assert.equal(reply.status, 404);

@@ -229,6 +229,13 @@ describe('sanitising what players type', () => {
     assert.equal(sanitizeNickname('N'.repeat(100), NICKNAME_MAX)!.length, NICKNAME_MAX);
   });
 
+  it('does not leave a space behind when the cut lands in a gap', () => {
+    // 17 characters, then the space that the truncation cuts on.
+    assert.equal(sanitizeNickname('abcdefghijklmnopq rs', NICKNAME_MAX), 'abcdefghijklmnopq');
+    assert.equal(sanitizeNickname('ab cdefghijklmnop qr', NICKNAME_MAX), 'ab cdefghijklmnop');
+    assert.equal(sanitizeNickname('a'.repeat(NICKNAME_MAX) + ' b', NICKNAME_MAX), 'a'.repeat(NICKNAME_MAX));
+  });
+
   it('falls back rather than returning nothing, for text that must exist', () => {
     assert.equal(sanitizeText('  Party  ', 20, 'Default'), 'Party');
     assert.equal(sanitizeText('', 20, 'Default'), 'Default');
