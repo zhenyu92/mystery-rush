@@ -457,6 +457,39 @@ check('the built-in bank still carries an event with no AI questions',
   h4.last?.snapshot.round?.roundIndex === 1);
 [h4, pp].forEach((c) => { try { c.ws.close(); } catch {} });
 
+// -------------------------------------------- a planned event ends itself
+console.log('=== 13. A planned event ends itself (~45s) ===');
+const ev5 = await post('/api/events', { eventName: 'Ending Test', plannedRounds: 1, categories: [] });
+const CODE5 = ev5.body.eventCode;
+const rob = (await post(`/api/events/${CODE5}/join`, { nickname: 'Rob' })).body;
+const h5 = connect(`code=${CODE5}&role=host&hostToken=${ev5.body.hostToken}`);
+const pr = connect(`code=${CODE5}&role=player&playerId=${rob.playerId}&playerToken=${rob.playerToken}`);
+await Promise.all([waitOpen(h5), waitOpen(pr)]);
+await sleep(600);
+
+send(h5, { type: 'host', action: 'start_round' });
+await waitFor(pr, (s) => s.round?.currentClue === 1, INTRO_DURATION_MS + 6000, 'ending clue 1');
+await waitUntil(() => h5.briefs.length >= 1, 5000, 'ending brief');
+send(pr, { type: 'submit_answer', option: h5.briefs[0].answer });
+await waitFor(pr, (s) => s.phase === 'results', 8000, 'ending results');
+
+const reachedLb = await waitFor(pr, (s) => s.phase === 'leaderboard', RESULTS_AUTO_MS + 8000, 'ending standings');
+check('the standings arrive on their own', reachedLb);
+check('and they queue the winner, not a second mystery',
+  pr.last?.snapshot.autoAdvance?.to === 'finished',
+  JSON.stringify(pr.last?.snapshot.autoAdvance));
+
+const finished = await waitFor(pr, (s) => s.phase === 'finished', LEADERBOARD_AUTO_MS + 8000, 'podium');
+check('one planned mystery means the event ends after one', finished);
+check('with nothing left counting down', pr.last?.snapshot.autoAdvance === null);
+
+h5.errors.length = 0;
+send(h5, { type: 'host', action: 'start_round' });
+await sleep(700);
+check('and the room refuses a mystery past the number the host promised',
+  h5.errors.some((e) => e.code === 'event_complete'), JSON.stringify(h5.errors));
+[h5, pr].forEach((c) => { try { c.ws.close(); } catch {} });
+
 console.log(`\n================  ${pass} passed, ${fail} failed  ================\n`);
 [host, pa, pb, pc, disp].forEach((s) => { try { s.ws.close(); } catch {} });
 console.log(`TEST_EVENT_CODE=${CODE}`);

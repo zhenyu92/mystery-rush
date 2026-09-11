@@ -265,7 +265,8 @@ function Stage({ code }: { code: string }) {
               className="pill pill--live"
               style={{ fontSize: 'clamp(14px, 1.6vw, 22px)', padding: '10px 22px' }}
             >
-              Next mystery in {nextSeconds}
+              {snapshot.autoAdvance?.to === 'finished' ? 'Winner in' : 'Next mystery in'}{' '}
+              {nextSeconds}
             </div>
           ) : null}
           <h1 className="stage__title center">

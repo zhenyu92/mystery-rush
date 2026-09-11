@@ -447,7 +447,9 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
 
           <p className="tiny dim center" style={{ margin: 0 }}>
             {nextSeconds > 0
-              ? `Next up in ${nextSeconds}s`
+              ? snapshot?.autoAdvance?.to === 'finished'
+                ? `Final results in ${nextSeconds}s`
+                : `Next up in ${nextSeconds}s`
               : 'Next mystery starts when the host is ready.'}
           </p>
         </>

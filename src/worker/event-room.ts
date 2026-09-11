@@ -26,6 +26,7 @@ import {
   isDifficulty,
   LEADERBOARD_AUTO_MS,
   MAX_RESPONSE_MS,
+  POOL_DEADLINE_MS,
   RESULTS_AUTO_MS,
   RESPONSE_BUCKET_MS,
   streakBonus,
@@ -85,6 +86,8 @@ interface EventMeta {
   poolDifficulty: Difficulty;
   /** Why the last pool preparation failed, if it did. */
   poolError: string | null;
+  /** When the first preparation request arrived, for the deadline. */
+  poolStartedAt: number | null;
   /** Whether the event advances between phases on its own. */
   autoAdvanceEnabled: boolean;
   /** How many mysteries the host intends to run, if they said so up front. */
@@ -212,6 +215,7 @@ export class EventRoom extends DurableObject<Env> {
           poolCategories: stored.meta.poolCategories ?? [],
           poolDifficulty: stored.meta.poolDifficulty ?? 'medium',
           poolError: stored.meta.poolError ?? null,
+          poolStartedAt: stored.meta.poolStartedAt ?? null,
           autoAdvanceEnabled: stored.meta.autoAdvanceEnabled ?? true,
           plannedRounds: stored.meta.plannedRounds ?? null,
         };
@@ -282,6 +286,23 @@ export class EventRoom extends DurableObject<Env> {
     await this.ctx.storage.deleteAlarm();
   }
 
+  /**
+   * True once the room has played everything the host said it would.
+   *
+   * A host who named a number was making a promise to the room, so the room
+   * keeps it: no sixth mystery in a five-mystery night. A host who did not
+   * name one is running an open-ended night and this is never true.
+   */
+  private planComplete(): boolean {
+    if (!this.meta || this.meta.plannedRounds === null) return false;
+    return this.meta.roundsPlayed >= this.meta.plannedRounds;
+  }
+
+  /** What should follow the standings: another mystery, or the podium. */
+  private afterLeaderboard(): AutoAdvanceTarget {
+    return this.planComplete() ? 'finished' : 'round';
+  }
+
   /** Queue the next phase hop, unless the host has switched that off. */
   private async scheduleAdvance(to: AutoAdvanceTarget, durationMs: number): Promise<void> {
     if (!this.meta?.autoAdvanceEnabled) {
@@ -307,6 +328,8 @@ export class EventRoom extends DurableObject<Env> {
         return this.handleVerifyHost(request);
       case '/library':
         return this.handleLibraryAdd(request);
+      case '/pool-begin':
+        return this.handlePoolBegin(request);
       case '/ws':
         return this.handleWebSocketUpgrade(request, url);
       default:
@@ -340,6 +363,7 @@ export class EventRoom extends DurableObject<Env> {
         : [],
       poolDifficulty: isDifficulty(body.difficulty) ? body.difficulty : 'medium',
       poolError: null,
+      poolStartedAt: null,
       autoAdvanceEnabled: body.autoAdvance !== false,
       plannedRounds:
         typeof body.plannedRounds === 'number' && body.plannedRounds > 0
@@ -458,6 +482,38 @@ export class EventRoom extends DurableObject<Env> {
       poolDifficulty: this.meta.poolDifficulty,
       wanted: this.meta.plannedRounds ?? 0,
       have: Object.keys(this.library).length,
+    });
+  }
+
+  /**
+   * Open (or re-open) the window in which this event's questions get written.
+   *
+   * The clock starts at the first request rather than at creation, so a host
+   * who makes the event and walks away does not come back to a pool that
+   * already timed out while nobody was asking for anything.
+   */
+  private async handlePoolBegin(request: Request): Promise<Response> {
+    if (!this.meta) return json({ error: 'no_such_event' }, 404);
+    const body = (await request.json()) as { hostToken?: string };
+    if (!safeEqual(this.meta.hostTokenHash, await hashToken(body.hostToken ?? ''))) {
+      return json({ error: 'unauthorised' }, 403);
+    }
+
+    const now = Date.now();
+    if (this.meta.poolStartedAt === null) {
+      this.meta.poolStartedAt = now;
+      await this.persist();
+      this.broadcast();
+    }
+
+    return json({
+      ok: true,
+      poolCategories: this.meta.poolCategories,
+      poolDifficulty: this.meta.poolDifficulty,
+      wanted: this.meta.plannedRounds ?? 0,
+      have: Object.keys(this.library).length,
+      existingAnswers: this.allMysteries().map((m) => m.answer),
+      elapsedMs: now - this.meta.poolStartedAt,
     });
   }
 
@@ -792,7 +848,7 @@ export class EventRoom extends DurableObject<Env> {
         if (this.meta) {
           this.meta.phase = this.meta.roundsPlayed > 0 ? 'leaderboard' : 'lobby';
           if (this.meta.phase === 'leaderboard') {
-            await this.scheduleAdvance('round', LEADERBOARD_AUTO_MS);
+            await this.scheduleAdvance(this.afterLeaderboard(), LEADERBOARD_AUTO_MS);
           } else {
             await this.cancelSchedule();
           }
@@ -828,6 +884,14 @@ export class EventRoom extends DurableObject<Env> {
     }
     if (Object.keys(this.players).length === 0) {
       sendMaybe(ws, { type: 'error', code: 'no_players', message: 'Nobody has joined yet.' });
+      return;
+    }
+    if (this.planComplete()) {
+      sendMaybe(ws, {
+        type: 'error',
+        code: 'event_complete',
+        message: `All ${this.meta.plannedRounds} mysteries have been played.`,
+      });
       return;
     }
 
@@ -982,13 +1046,24 @@ export class EventRoom extends DurableObject<Env> {
     if (s.to === 'leaderboard') {
       if (this.meta.phase !== 'results') return;
       this.meta.phase = 'leaderboard';
-      await this.scheduleAdvance('round', LEADERBOARD_AUTO_MS);
+      await this.scheduleAdvance(this.afterLeaderboard(), LEADERBOARD_AUTO_MS);
       this.syncPhaseToD1();
       this.broadcast();
       return;
     }
 
     if (this.meta.phase !== 'leaderboard') return;
+
+    // The host asked for a set number of mysteries and the room has played
+    // them. Ending here is keeping the promise, not the timer overreaching.
+    if (s.to === 'finished') {
+      this.meta.phase = 'finished';
+      await this.cancelSchedule();
+      this.syncPhaseToD1();
+      this.broadcast();
+      return;
+    }
+
     if (this.queue.length === 0 || Object.keys(this.players).length === 0) {
       // Out of mysteries, or an empty room. Sit on the standings; ending the
       // event is the host's moment, never the timer's.
@@ -1339,6 +1414,7 @@ export class EventRoom extends DurableObject<Env> {
         categories: meta.poolCategories,
         difficulty: meta.poolDifficulty,
         lastError: meta.poolError,
+        expiresAt: meta.poolStartedAt === null ? null : meta.poolStartedAt + POOL_DEADLINE_MS,
       },
       autoAdvance: this.publicAutoAdvance(),
       autoAdvanceEnabled: meta.autoAdvanceEnabled,

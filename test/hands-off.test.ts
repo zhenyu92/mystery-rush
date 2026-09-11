@@ -9,15 +9,22 @@
  */
 
 import assert from 'node:assert/strict';
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 
 import worker from '../src/worker/index';
-import { DOUBLE_MULTIPLIER, LEADERBOARD_AUTO_MS, pointsForClue, streakBonus } from '../src/shared/types';
+import {
+  DOUBLE_MULTIPLIER,
+  LEADERBOARD_AUTO_MS,
+  POOL_DEADLINE_MS,
+  pointsForClue,
+  streakBonus,
+} from '../src/shared/types';
 import type { Env } from '../src/worker/db';
 import { buildMysteryPool, meetsAutoAcceptBar } from '../src/worker/mystery-pool';
 import { createHarness, installWorkerGlobals, type Harness } from './support/env';
 import {
   answerFor,
+  lastErrorOn,
   releaseFakeClock,
   seatTable,
   useFakeClock,
@@ -133,6 +140,68 @@ describe('the final mystery scores double on its own', () => {
     // than fall through to something else.
     await table.host.say({ type: 'host', action: 'set_double', enabled: true });
     assert.equal(table.snapshot().nextRoundMultiplier, 1);
+  });
+});
+
+// ------------------------------------------------- the event has an ending
+
+describe('a planned event ends itself', () => {
+  let table: Table;
+
+  beforeEach(() => useFakeClock());
+  afterEach(() => releaseFakeClock());
+
+  async function playRound(): Promise<void> {
+    await table.host.say({ type: 'host', action: 'start_round' });
+    await table.tickToAlarm();
+    const answer = answerFor(table.host);
+    for (const player of table.roster) {
+      await table.players[player.nickname].socket.say({ type: 'submit_answer', option: answer });
+    }
+  }
+
+  it('counts down to the podium after the last planned mystery', async () => {
+    table = await seatTable(['Ada'], { plannedRounds: 1 });
+
+    await playRound();
+    await table.host.say({ type: 'host', action: 'show_leaderboard' });
+
+    const auto = table.snapshot().autoAdvance;
+    assert.equal(auto?.to, 'finished', 'the standings queue the winner, not a sixth mystery');
+
+    await table.tickToAlarm();
+    assert.equal(table.snapshot().phase, 'finished');
+    assert.equal(table.snapshot().autoAdvance, null, 'and nothing is left counting down');
+  });
+
+  it('queues another mystery while the plan still has room', async () => {
+    table = await seatTable(['Ada'], { plannedRounds: 2 });
+    await playRound();
+    await table.host.say({ type: 'host', action: 'show_leaderboard' });
+    assert.equal(table.snapshot().autoAdvance?.to, 'round');
+  });
+
+  it('refuses a mystery past the number the host promised', async () => {
+    table = await seatTable(['Ada'], { plannedRounds: 1 });
+    await playRound();
+
+    await table.host.say({ type: 'host', action: 'start_round' });
+    assert.equal(lastErrorOn(table.host), 'event_complete');
+    assert.notEqual(table.snapshot().phase, 'round');
+  });
+
+  it('leaves an open-ended event waiting for the host', async () => {
+    table = await seatTable(['Ada']);
+    await playRound();
+    await table.host.say({ type: 'host', action: 'show_leaderboard' });
+    assert.equal(
+      table.snapshot().autoAdvance?.to,
+      'round',
+      'a host who never named a number is still running the night',
+    );
+
+    await table.tickToAlarm();
+    assert.equal(table.snapshot().phase, 'round', 'the timer never decides a night is over');
   });
 });
 
@@ -376,6 +445,69 @@ describe('the automatic question pool', () => {
     assert.equal(body.added, 0);
     assert.equal(body.done, true, 'asking again would only cost the host more lobby time');
     assert.ok(body.error);
+  });
+
+  it('gives up once writing has run past its budget', async () => {
+    useFakeClock();
+    try {
+      const { eventCode, hostToken } = await createEvent({ plannedRounds: 3 });
+      harness.ai.push({ mysteries: [mystery()] }).push(goodEvaluation);
+
+      // First request starts the clock and writes one.
+      const first = await post(`/api/events/${eventCode}/pool`, { hostToken });
+      assert.equal(((await first.json()) as { added: number }).added, 1);
+
+      // The room waited too long. Anything queued for the model is moot.
+      mock.timers.tick(POOL_DEADLINE_MS + 1_000);
+      harness.ai.push({ mysteries: [otherMystery()] }).push(goodEvaluation);
+      const spentBefore = harness.ai.calls.length;
+
+      const res = await post(`/api/events/${eventCode}/pool`, { hostToken });
+      const body = (await res.json()) as {
+        added: number;
+        done: boolean;
+        timedOut?: boolean;
+        error: string | null;
+      };
+      assert.equal(body.added, 0);
+      assert.equal(body.timedOut, true);
+      assert.equal(body.done, true, 'the lobby stops asking');
+      assert.ok(body.error);
+      assert.equal(harness.ai.calls.length, spentBefore, 'and no further inference is spent');
+    } finally {
+      releaseFakeClock();
+    }
+  });
+
+  it('starts that budget at the first request, not at creation', async () => {
+    useFakeClock();
+    try {
+      const { eventCode, hostToken } = await createEvent();
+      // The host made the event and walked away before opening the console.
+      mock.timers.tick(POOL_DEADLINE_MS * 3);
+      harness.ai.push({ mysteries: [mystery()] }).push(goodEvaluation);
+
+      const res = await post(`/api/events/${eventCode}/pool`, { hostToken });
+      const body = (await res.json()) as { added: number; timedOut?: boolean };
+      assert.equal(body.added, 1, 'nothing timed out while nobody was asking');
+      assert.notEqual(body.timedOut, true);
+    } finally {
+      releaseFakeClock();
+    }
+  });
+
+  it('publishes the deadline so the lobby can count it down', async () => {
+    const { eventCode, hostToken } = await createEvent();
+    harness.ai.push({ mysteries: [mystery()] }).push(goodEvaluation);
+
+    const table = await seatTableOn(harness, eventCode, hostToken);
+    assert.equal(table.snapshot().pool.expiresAt, null, 'no clock before anyone asks');
+
+    await post(`/api/events/${eventCode}/pool`, { hostToken });
+    assert.ok(
+      (table.snapshot().pool.expiresAt ?? 0) > Date.now(),
+      'the first request starts it, and the host is told when it runs out',
+    );
   });
 
   it('survives an AI outage and says so on the host snapshot', async () => {
