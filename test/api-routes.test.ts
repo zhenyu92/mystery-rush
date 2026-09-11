@@ -162,6 +162,16 @@ describe('GET /api/events/:code', () => {
     }
   });
 
+  it('400s a code whose percent-escapes are malformed', async () => {
+    // decodeURIComponent throws on these. A code that will not decode is
+    // still just a bad code, and must not surface as an internal error.
+    for (const bad of ['%zz', '%E0%A4%A', '%', 'AB%2']) {
+      const reply = await request<{ error: string }>(harness, 'GET', `/api/events/${bad}`);
+      assert.equal(reply.status, 400, `for ${bad}`);
+      assert.equal(reply.body.error, 'bad_code');
+    }
+  });
+
   it('rejects an unsupported method on the event resource', async () => {
     const event = await createEvent(harness);
     const reply = await request<{ error: string }>(harness, 'DELETE', `/api/events/${event.eventCode}`);
@@ -265,6 +275,16 @@ describe('POST /api/events/:code/join', () => {
   it('400s a malformed code', async () => {
     const reply = await request(harness, 'POST', '/api/events/no/join', { body: { nickname: 'Ada' } });
     assert.equal(reply.status, 400);
+  });
+
+  it('400s a join whose code has malformed percent-escapes', async () => {
+    for (const bad of ['%zz', '%E0%A4%A']) {
+      const reply = await request<{ error: string }>(harness, 'POST', `/api/events/${bad}/join`, {
+        body: { nickname: 'Ada' },
+      });
+      assert.equal(reply.status, 400, `for ${bad}`);
+      assert.equal(reply.body.error, 'bad_code');
+    }
   });
 
   it('rejects a GET on the join endpoint', async () => {
