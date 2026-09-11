@@ -97,7 +97,41 @@ deploys — use `npm run preview` and open http://localhost:8787.
 | --- | --- |
 | `npm run build` | Build the client into `dist/client`. |
 | `npm run typecheck` | Typecheck the client and the Worker (they have separate tsconfigs). |
+| `npm test` | Run the Worker test suite. |
+| `npm run test:coverage` | The same, with a coverage report for `src/worker` and `src/shared`. |
 | `npm run deploy` | Build, then `wrangler deploy`. |
+
+---
+
+## Tests
+
+```bash
+npm test
+```
+
+The suite covers the Worker: the HTTP API, the WebSocket protocol, and the
+whole round lifecycle inside the Durable Object. It has **no dependencies of
+its own** - it is Node's built-in test runner reading the TypeScript sources
+directly via Node's type stripping, so there is no build step, no test
+framework to keep in sync, and nothing extra in `package-lock.json`.
+
+Three things the Cloudflare runtime provides are stood in for, in
+[`test/support/`](test/support/): the `cloudflare:workers` module, a
+`DurableObjectState` with storage, alarms and hibernatable sockets, and an
+in-memory D1. Everything else under test is the shipped code - the Worker's
+own `fetch` handler and a real `EventRoom`.
+
+| File | What it covers |
+| --- | --- |
+| `test/api-routes.test.ts` | `/api/mysteries`, event creation, lookup, join, routing |
+| `test/websocket-protocol.test.ts` | the upgrade handshake, auth, rate limiting, presence |
+| `test/round-lifecycle.test.ts` | the clue clock, scoring, pause/resume, what leaves the server |
+| `test/host-controls.test.ts` | leaderboard, kick, reset, end event |
+| `test/archive.test.ts` | D1 write-through, outage behaviour, surviving an eviction |
+| `test/game-helpers.test.ts` | codes, tokens, shuffling, option building, sanitising |
+
+The test files are not part of either `tsconfig`: they are checked by running
+them, since typechecking them would mean adding `@types/node`.
 
 ---
 
@@ -188,4 +222,7 @@ src/client/
   lib/useGameSocket.ts   WebSocket + reconnection + server clock sync
   lib/useCountdown.ts    display-only countdown
   styles.css             the design system
+test/
+  support/               a miniature Workers runtime (DO state, sockets, D1)
+  *.test.ts              the Worker suite - see "Tests" above
 ```

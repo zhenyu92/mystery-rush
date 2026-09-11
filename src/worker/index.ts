@@ -42,6 +42,20 @@ function normaliseCode(raw: string | null): string | null {
   return CODE_PATTERN.test(code) ? code : null;
 }
 
+/**
+ * Percent-decode a path segment. A malformed escape (`%zz`, a truncated
+ * multi-byte sequence) makes `decodeURIComponent` throw, and a code that
+ * cannot be decoded is simply not a code - so it is a 400 like any other bad
+ * one, not an unhandled error.
+ */
+function decodePathSegment(raw: string): string | null {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+}
+
 async function handleSocket(request: Request, env: Env, url: URL): Promise<Response> {
   const code = normaliseCode(url.searchParams.get('code'));
   if (!code) return json({ error: 'bad_code' }, 400);
@@ -82,7 +96,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   const match = path.match(/^\/api\/events\/([^/]+)(\/join)?$/);
   if (match) {
-    const code = normaliseCode(decodeURIComponent(match[1]));
+    const code = normaliseCode(decodePathSegment(match[1]));
     if (!code) return json({ error: 'bad_code', message: 'That code does not look right.' }, 400);
 
     // GET /api/events/:code - does this event exist, and what is it called?
