@@ -77,13 +77,27 @@ export function isCorrectAnswer(mystery: Mystery, selectedOption: string): boole
   return selectedOption === mystery.answer;
 }
 
-// Control characters, zero-width joiners and line separators, which would
-// otherwise let someone smuggle newlines or invisible padding into a nickname.
+/**
+ * Invisible characters that nonetheless mean "there is a gap here": tab, the
+ * newline family, and the Unicode line and paragraph separators. These are
+ * turned into a plain space so the collapse below folds them - deleting them
+ * outright would weld the words on either side together.
+ */
+const SEPARATOR = /[\t\n\v\f\r\u0085\u2028\u2029]/g;
+
+// What is left of the control and format categories once the separators
+// above are gone: zero-width joiners, bidi overrides and friends, which would
+// otherwise let someone smuggle invisible padding into a nickname.
 const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
 export function sanitizeNickname(raw: unknown, max: number): string | null {
   if (typeof raw !== 'string') return null;
-  const cleaned = raw.replace(INVISIBLE, '').replace(/\s+/g, ' ').trim().slice(0, max);
+  const cleaned = raw
+    .replace(SEPARATOR, ' ')
+    .replace(INVISIBLE, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, max);
   return cleaned.length >= 1 ? cleaned : null;
 }
 

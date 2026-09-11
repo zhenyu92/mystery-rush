@@ -10,6 +10,7 @@ import { describe, it } from 'node:test';
 import {
   CLUE_COUNT,
   CLUE_POINTS,
+  EVENT_NAME_MAX,
   NICKNAME_MAX,
   pointsForClue,
   typeLabel,
@@ -187,10 +188,35 @@ describe('sanitising what players type', () => {
     assert.equal(sanitizeNickname('Ada\u00a0\u00a0L', NICKNAME_MAX), 'Ada L');
   });
 
+  it('treats an invisible separator as a gap, not as nothing', () => {
+    // These arrive whenever someone pastes from a chat client or a
+    // spreadsheet. Deleting them instead of folding them welds the words on
+    // either side together.
+    assert.equal(sanitizeNickname('Ada\u0009Lovelace', NICKNAME_MAX), 'Ada Lovelace', 'tab');
+    assert.equal(sanitizeNickname('Ada\u000aL', NICKNAME_MAX), 'Ada L', 'line feed');
+    assert.equal(sanitizeNickname('Ada\u000d\u000aL', NICKNAME_MAX), 'Ada L', 'carriage return');
+    assert.equal(sanitizeNickname('Ada\u000bL', NICKNAME_MAX), 'Ada L', 'vertical tab');
+    assert.equal(sanitizeNickname('Ada\u000cL', NICKNAME_MAX), 'Ada L', 'form feed');
+    assert.equal(sanitizeNickname('Ada\u0085L', NICKNAME_MAX), 'Ada L', 'next line');
+    assert.equal(sanitizeNickname('Ada\u2028L', NICKNAME_MAX), 'Ada L', 'line separator');
+    assert.equal(sanitizeNickname('Ada\u2029L', NICKNAME_MAX), 'Ada L', 'paragraph separator');
+  });
+
+  it('does not let a separator become padding of its own', () => {
+    assert.equal(sanitizeNickname('\u000a\u0009Ada\u000a', NICKNAME_MAX), 'Ada');
+    assert.equal(sanitizeNickname('Ada\u000a\u000a\u000aL', NICKNAME_MAX), 'Ada L', 'a run is one gap');
+    assert.equal(sanitizeNickname('\u000a\u0009\u000d', NICKNAME_MAX), null, 'gaps are not a name');
+  });
+
   it('strips invisible characters used to smuggle padding', () => {
     assert.equal(sanitizeNickname(`Ada${ZERO_WIDTH}`, NICKNAME_MAX), 'Ada');
     assert.equal(sanitizeNickname(`Ad${NUL}a`, NICKNAME_MAX), 'Ada');
     assert.equal(sanitizeNickname(`${ZERO_WIDTH}${NUL}`, NICKNAME_MAX), null, 'nothing is left');
+    assert.equal(
+      sanitizeNickname(`Ada${ZERO_WIDTH}L`, NICKNAME_MAX),
+      'AdaL',
+      'a zero-width joiner is not a gap, so it must not leave one behind',
+    );
   });
 
   it('rejects anything that is not a non-empty string', () => {
@@ -207,6 +233,13 @@ describe('sanitising what players type', () => {
     assert.equal(sanitizeText('  Party  ', 20, 'Default'), 'Party');
     assert.equal(sanitizeText('', 20, 'Default'), 'Default');
     assert.equal(sanitizeText(undefined, 20, 'Default'), 'Default');
+  });
+
+  it('keeps an event name readable when it arrives with a line break', () => {
+    assert.equal(
+      sanitizeText('Friday\u000aSocial', EVENT_NAME_MAX, 'Default'),
+      'Friday Social',
+    );
   });
 });
 
