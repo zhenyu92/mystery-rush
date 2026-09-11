@@ -163,6 +163,11 @@ Each clue must add NEW information the previous ones did not. Never make clue 2 
 Write clues in the first person, as the subject speaking, e.g. "I was built for a world exhibition."
 Do not name the answer in clues 1 to 4. Do not name any of the other options in any clue.
 
+THE TITLE
+The title is shown on the projector before clue 1, so it sets up the mystery without solving it.
+Give it a short teasing name of two to five words that hints at the subject - "Orange in the Fog",
+"Cold War Countdown". Never use the category as the title, and never name the answer.
+
 THE ANSWER AND OPTIONS
 - Exactly one defensible answer. If two options could both honestly fit the clues, rewrite it.
 - Give 5 options: the answer plus 4 distractors from the same category, all plausible enough to

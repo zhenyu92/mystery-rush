@@ -48,9 +48,13 @@ export interface CreatedEvent {
   hostToken: string;
 }
 
-export async function createEvent(harness: Harness, eventName?: string): Promise<CreatedEvent> {
+export async function createEvent(
+  harness: Harness,
+  eventName?: string,
+  extra: Record<string, unknown> = {},
+): Promise<CreatedEvent> {
   const reply = await request<CreatedEvent>(harness, 'POST', '/api/events', {
-    body: eventName === undefined ? {} : { eventName },
+    body: eventName === undefined ? { ...extra } : { eventName, ...extra },
   });
   if (reply.status !== 201) throw new Error(`create failed: ${reply.status}`);
   await harness.settle();
