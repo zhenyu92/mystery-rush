@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   CLUE_POINTS,
+  DIFFICULTIES,
   EVENT_NAME_MAX,
-  LEADERBOARD_AUTO_MS,
-  RESULTS_AUTO_MS,
+  MYSTERY_TYPES,
   typeLabel,
+  type Difficulty,
   type HostAction,
+  type PoolStatus,
 } from '../../shared/types';
 import { ApiError, api } from '../lib/api';
 import { session } from '../lib/session';
@@ -14,7 +16,6 @@ import { useGameSocket } from '../lib/useGameSocket';
 import { Brand, ConnectionDot, Modal, TimerRing, Toast, formatXp, plural } from '../components/common';
 import { AnswerBars, ClueList, CluePips, Leaderboard, Podium } from '../components/game';
 import { Confetti } from '../components/Confetti';
-import { AiGenerator } from '../components/AiGenerator';
 import { QrCode } from '../components/QrCode';
 
 export function Host({
@@ -41,6 +42,16 @@ function CreateEvent({
 }) {
   const [eventName, setEventName] = useState('Annual Dinner Mystery Rush');
   const [plannedRounds, setPlannedRounds] = useState('8');
+  // A spread that most rooms will recognise. The host narrows it if they want
+  // a themed night; the only rule is that something is chosen.
+  const [categories, setCategories] = useState<string[]>([
+    'landmark',
+    'movie',
+    'food',
+    'animal',
+    'space',
+  ]);
+  const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resumable, setResumable] = useState<{ code: string; eventName: string } | null>(null);
@@ -59,10 +70,12 @@ function CreateEvent({
     setError(null);
     try {
       const planned = Number.parseInt(plannedRounds, 10);
-      const created = await api.createEvent(
-        eventName.trim() || 'Mystery Rush Night',
-        Number.isFinite(planned) && planned > 0 ? planned : null,
-      );
+      const created = await api.createEvent({
+        eventName: eventName.trim() || 'Mystery Rush Night',
+        plannedRounds: Number.isFinite(planned) && planned > 0 ? planned : 1,
+        categories,
+        difficulty,
+      });
       session.saveHost({
         eventCode: created.eventCode,
         hostToken: created.hostToken,
@@ -123,11 +136,55 @@ function CreateEvent({
             onChange={(e) => setPlannedRounds(e.target.value)}
           />
           <span className="tiny dim">
-            The last one automatically scores double, so the room stays in play to the end. Leave
-            blank if you would rather decide as you go.
+            The last one always scores double, so the room stays in play to the end.
           </span>
         </div>
-        <button className="btn btn--primary btn--lg btn--block" disabled={busy}>
+
+        <div className="field">
+          <label className="field__label">What should they be about?</label>
+          <div className="catgrid">
+            {MYSTERY_TYPES.map((t) => (
+              <label key={t} className={`catchip${categories.includes(t) ? ' catchip--on' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={categories.includes(t)}
+                  onChange={() =>
+                    setCategories((prev) =>
+                      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+                    )
+                  }
+                />
+                <span>
+                  {typeLabel(t).emoji} {typeLabel(t).label}
+                </span>
+              </label>
+            ))}
+          </div>
+          <span className="tiny dim">
+            Your questions get written for this event once you have a code. Pick at least one.
+          </span>
+        </div>
+
+        <div className="field">
+          <label className="field__label">How hard?</label>
+          <div className="row" style={{ gap: 6 }}>
+            {DIFFICULTIES.map((d) => (
+              <button
+                key={d}
+                type="button"
+                className={`btn btn--sm ${difficulty === d ? 'btn--cyan' : 'btn--ghost'}`}
+                onClick={() => setDifficulty(d)}
+              >
+                {d[0].toUpperCase() + d.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          className="btn btn--primary btn--lg btn--block"
+          disabled={busy || categories.length === 0}
+        >
           {busy ? 'Creating...' : 'Create event and get a code'}
         </button>
       </form>
@@ -191,6 +248,128 @@ function HostAnswer({
             ))}
           </ol>
         </details>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Writes this event's questions while the room is filling up.
+ *
+ * The host has already said how many and what about; there is nothing to
+ * decide here, so this is a progress line rather than a control. It works in
+ * small batches so that "12 of 20 written" is visible progress instead of a
+ * spinner that might be stuck, and it stops the moment the server says there
+ * is no point asking again.
+ *
+ * Failure is not an error state. The built-in bank is already queued behind
+ * whatever gets written, so a night where the model never answers still plays
+ * exactly as it did before any of this existed - it just says so.
+ */
+function PoolPrep({
+  code,
+  hostToken,
+  pool,
+}: {
+  code: string;
+  hostToken: string;
+  pool: PoolStatus;
+}) {
+  const [tick, setTick] = useState(0);
+  const [stopped, setStopped] = useState(false);
+  const [working, setWorking] = useState(false);
+  // A ref as well as the state: the state drives the label, the ref stops a
+  // second request starting before the first has come back.
+  const inFlight = useRef(false);
+
+  const wanted = pool.wanted;
+  const have = pool.ai;
+  const short = Math.max(0, wanted - have);
+
+  useEffect(() => {
+    if (stopped || short === 0 || pool.categories.length === 0) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setWorking(true);
+    let live = true;
+
+    api
+      .preparePool(code, hostToken)
+      .then((p) => {
+        // `done` covers both "we have enough" and "asking again will not
+        // help". Either way there is nothing left to do here.
+        if (live && p.done) setStopped(true);
+      })
+      .catch(() => {
+        // The room already carries the reason in `pool.lastError`; repeating
+        // it here would say the same thing twice.
+        if (live) setStopped(true);
+      })
+      .finally(() => {
+        inFlight.current = false;
+        if (live) {
+          setWorking(false);
+          // Nudge the effect rather than relying on the snapshot arriving,
+          // so a batch that added nothing still ends the loop cleanly.
+          setTick((t) => t + 1);
+        }
+      });
+
+    return () => {
+      live = false;
+    };
+  }, [code, hostToken, short, stopped, pool.categories.length, tick]);
+
+  if (wanted === 0 || pool.categories.length === 0) return null;
+
+  const ready = have >= wanted;
+  const pct = wanted === 0 ? 100 : Math.min(100, Math.round((have / wanted) * 100));
+
+  return (
+    <div className="card stack stack--tight">
+      <div className="row row--between">
+        <div className="card__title" style={{ margin: 0 }}>
+          {ready ? '✨ Questions ready' : '✨ Writing your questions'}
+        </div>
+        <span className="pill">
+          {have} of {wanted}
+        </span>
+      </div>
+
+      <div
+        className="poolbar"
+        role="progressbar"
+        aria-valuenow={have}
+        aria-valuemin={0}
+        aria-valuemax={wanted}
+      >
+        <div className="poolbar__fill" style={{ width: `${pct}%` }} />
+      </div>
+
+      <p className="tiny dim" style={{ margin: 0 }}>
+        {ready
+          ? `${wanted} ${wanted === 1 ? 'mystery' : 'mysteries'} written for this event, on ${pool.categories
+              .map((c) => typeLabel(c).label)
+              .join(', ')}. You can start whenever the room is ready.`
+          : working
+            ? 'Each one is written, checked and scored before it goes in. This takes a few seconds per question - the room can keep joining.'
+            : stopped
+              ? `Wrote ${have} of ${wanted}. The remaining ${short} will come from the built-in bank, which plays exactly the same.`
+              : 'Starting...'}
+      </p>
+
+      {pool.lastError ? <p className="tiny dim" style={{ margin: 0 }}>{pool.lastError}</p> : null}
+
+      {stopped && !ready ? (
+        <button
+          className="btn btn--ghost btn--sm"
+          onClick={() => {
+            setStopped(false);
+            setTick((t) => t + 1);
+          }}
+        >
+          {'↻'} Try the rest again
+        </button>
       ) : null}
     </div>
   );
@@ -305,6 +484,10 @@ function HostConsole({
                 <QrCode value={joinUrl} size={170} label="Scan to join" />
               </div>
             </div>
+          ) : null}
+
+          {phase === 'lobby' && snapshot ? (
+            <PoolPrep code={code} hostToken={hostToken} pool={snapshot.pool} />
           ) : null}
 
           {/* ------------------------------------------ round: get ready */}
@@ -490,15 +673,6 @@ function HostConsole({
                 </button>
               )}
 
-              {phase !== 'round' ? (
-                <button
-                  className={doubleArmed ? 'btn btn--danger' : 'btn btn--ghost'}
-                  onClick={() => send({ type: 'host', action: 'set_double', enabled: !doubleArmed })}
-                >
-                  {'⚡'} Double points: {doubleArmed ? 'ARMED' : 'off'}
-                </button>
-              ) : null}
-
               {phase === 'results' ? (
                 <button className="btn btn--cyan" onClick={() => act('show_leaderboard')}>
                   {'\u{1F4CA}'} Show leaderboard
@@ -523,23 +697,10 @@ function HostConsole({
             {phase !== 'round' ? (
               <p className="tiny dim" style={{ margin: 0 }}>
                 {isFinalPlanned
-                  ? `This is mystery ${snapshot?.plannedRounds} of ${snapshot?.plannedRounds} - the last one, so it armed double points itself. Tell the room before you start it.`
-                  : 'Clues advance on their own - you never need to click through them. Pause freezes the clock for the whole room.'}
+                  ? `This is mystery ${snapshot?.plannedRounds} of ${snapshot?.plannedRounds} - the last one, so it scores double. Tell the room before you start it.`
+                  : 'Everything advances on its own. Pause freezes the clock for the whole room, for as long as you are talking.'}
               </p>
             ) : null}
-
-            <label className="row tiny dim" style={{ gap: 8, cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={snapshot?.autoAdvanceEnabled ?? true}
-                onChange={(e) =>
-                  send({ type: 'host', action: 'set_auto_advance', enabled: e.target.checked })
-                }
-              />
-              Advance between mysteries on its own ({RESULTS_AUTO_MS / 1000}s on the answer, then{' '}
-              {LEADERBOARD_AUTO_MS / 1000}s on the standings). Turn it off if you are doing a lot of
-              talking.
-            </label>
 
             <div className="row">
               <button className="btn btn--ghost btn--sm" onClick={() => window.open(`/display?code=${code}`, '_blank')}>
@@ -570,16 +731,6 @@ function HostConsole({
               </div>
             ) : null}
           </div>
-
-          {phase !== 'round' ? (
-            <AiGenerator
-              code={code}
-              hostToken={hostToken}
-              onApproved={() => {
-                /* The room re-broadcasts its catalog, so the picker updates itself. */
-              }}
-            />
-          ) : null}
 
           {phase !== 'round' ? (
             <div className="card stack">

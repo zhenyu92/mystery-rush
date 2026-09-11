@@ -23,6 +23,7 @@ import {
   DOUBLE_MULTIPLIER,
   EVENT_NAME_MAX,
   INTRO_DURATION_MS,
+  isDifficulty,
   LEADERBOARD_AUTO_MS,
   MAX_RESPONSE_MS,
   RESULTS_AUTO_MS,
@@ -31,6 +32,7 @@ import {
   NICKNAME_MAX,
   pointsForClue,
   type ClientMessage,
+  type Difficulty,
   type EventPhase,
   type LeaderboardEntry,
   type LobbyPlayer,
@@ -78,8 +80,11 @@ interface EventMeta {
   createdAt: number;
   phase: EventPhase;
   roundsPlayed: number;
-  /** The next round scores double. Armed by the host or by plannedRounds. */
-  doublePending: boolean;
+  /** Categories and difficulty the host chose when creating the event. */
+  poolCategories: string[];
+  poolDifficulty: Difficulty;
+  /** Why the last pool preparation failed, if it did. */
+  poolError: string | null;
   /** Whether the event advances between phases on its own. */
   autoAdvanceEnabled: boolean;
   /** How many mysteries the host intends to run, if they said so up front. */
@@ -204,7 +209,9 @@ export class EventRoom extends DurableObject<Env> {
       if (stored) {
         this.meta = {
           ...stored.meta,
-          doublePending: stored.meta.doublePending ?? false,
+          poolCategories: stored.meta.poolCategories ?? [],
+          poolDifficulty: stored.meta.poolDifficulty ?? 'medium',
+          poolError: stored.meta.poolError ?? null,
           autoAdvanceEnabled: stored.meta.autoAdvanceEnabled ?? true,
           plannedRounds: stored.meta.plannedRounds ?? null,
         };
@@ -313,6 +320,8 @@ export class EventRoom extends DurableObject<Env> {
       eventName?: string;
       hostToken?: string;
       plannedRounds?: number;
+      categories?: unknown;
+      difficulty?: unknown;
       /** Tests turn this off so they can drive the phases themselves. */
       autoAdvance?: boolean;
     };
@@ -326,7 +335,11 @@ export class EventRoom extends DurableObject<Env> {
       createdAt: Date.now(),
       phase: 'lobby',
       roundsPlayed: 0,
-      doublePending: false,
+      poolCategories: Array.isArray(body.categories)
+        ? body.categories.filter((c): c is string => typeof c === 'string')
+        : [],
+      poolDifficulty: isDifficulty(body.difficulty) ? body.difficulty : 'medium',
+      poolError: null,
       autoAdvanceEnabled: body.autoAdvance !== false,
       plannedRounds:
         typeof body.plannedRounds === 'number' && body.plannedRounds > 0
@@ -438,6 +451,13 @@ export class EventRoom extends DurableObject<Env> {
       eventName: this.meta.eventName,
       // So the generator can avoid answers the room will already have seen.
       existingAnswers: this.allMysteries().map((m) => m.answer),
+      // The pool spec lives here, not in the request: the categories and the
+      // size were settled when the event was created, and a later caller does
+      // not get to change what this event is about.
+      poolCategories: this.meta.poolCategories,
+      poolDifficulty: this.meta.poolDifficulty,
+      wanted: this.meta.plannedRounds ?? 0,
+      have: Object.keys(this.library).length,
     });
   }
 
@@ -450,12 +470,44 @@ export class EventRoom extends DurableObject<Env> {
    */
   private async handleLibraryAdd(request: Request): Promise<Response> {
     if (!this.meta) return json({ error: 'no_such_event' }, 404);
-    const body = (await request.json()) as { hostToken?: string; mystery?: Mystery };
+    const body = (await request.json()) as {
+      hostToken?: string;
+      mystery?: Mystery;
+      /** A batch, for the automatic pool. Same rules, one hop. */
+      mysteries?: Mystery[];
+      /** What to show the host if preparing the pool went wrong. */
+      poolError?: string | null;
+    };
     if (!safeEqual(this.meta.hostTokenHash, await hashToken(body.hostToken ?? ''))) {
       return json({ error: 'unauthorised' }, 403);
     }
 
-    const m = body.mystery;
+    if (body.poolError !== undefined) {
+      this.meta.poolError = typeof body.poolError === 'string' ? body.poolError.slice(0, 200) : null;
+    }
+
+    const incoming = Array.isArray(body.mysteries)
+      ? body.mysteries
+      : body.mystery !== undefined
+        ? [body.mystery]
+        : [];
+
+    // Check the whole batch before taking any of it, so a bad entry cannot
+    // leave half a pool in memory that never reaches storage.
+    for (const one of incoming) {
+      const bad = this.rejectMystery(one);
+      if (bad) return bad;
+    }
+    for (const one of incoming) this.addToLibrary(one as Mystery);
+
+    await this.persist();
+    this.broadcastCatalog();
+    this.broadcast();
+    return json({ ok: true, librarySize: Object.keys(this.library).length });
+  }
+
+  /** Why this mystery cannot be taken in, or null if it can. */
+  private rejectMystery(m: Mystery | undefined): Response | null {
     const shapeOk =
       m !== undefined &&
       typeof m.id === 'string' &&
@@ -473,7 +525,11 @@ export class EventRoom extends DurableObject<Env> {
     if (Object.keys(this.library).length >= 60) {
       return json({ error: 'library_full', message: 'This event already has plenty of mysteries.' }, 409);
     }
+    return null;
+  }
 
+  /** Make one mystery playable in this event. Shape already checked. */
+  private addToLibrary(m: Mystery): void {
     const wasNew = !this.library[m.id];
     this.library[m.id] = {
       id: m.id,
@@ -483,13 +539,10 @@ export class EventRoom extends DurableObject<Env> {
       options: m.options,
       clues: m.clues,
     };
-    // Make it drawable straight away, without disturbing what is queued.
-    if (wasNew && !this.queue.includes(m.id)) this.queue.push(m.id);
-
-    await this.persist();
-    this.broadcastCatalog();
-    this.broadcast();
-    return json({ ok: true, librarySize: Object.keys(this.library).length });
+    // Written-for-this-event mysteries go to the front. The built-in bank
+    // stays behind them as a fallback, so it is only ever reached when the
+    // pool came up short.
+    if (wasNew && !this.queue.includes(m.id)) this.queue.unshift(m.id);
   }
 
   private async handleWebSocketUpgrade(request: Request, url: URL): Promise<Response> {
@@ -713,25 +766,6 @@ export class EventRoom extends DurableObject<Env> {
       case 'next_round':
         await this.startRound(ws, msg.mysteryId);
         return;
-      case 'set_double': {
-        if (!this.meta) return;
-        // Only between rounds (the intro counts - nobody has answered yet).
-        // Flipping it mid-clue would retroactively change what an already
-        // locked-in answer is worth.
-        const live = this.meta.phase === 'round' && this.round?.status !== 'intro';
-        if (live) {
-          send(ws, {
-            type: 'error',
-            code: 'round_running',
-            message: 'Arm double points between mysteries.',
-          });
-          return;
-        }
-        this.meta.doublePending = msg.enabled ?? !this.meta.doublePending;
-        await this.persist();
-        this.broadcast();
-        return;
-      }
       case 'hold_auto':
         // Stop the countdown without turning the feature off for the night.
         await this.cancelSchedule();
@@ -819,11 +853,11 @@ export class EventRoom extends DurableObject<Env> {
     const mystery = this.resolveMystery(mysteryId)!;
     const now = Date.now();
 
-    // A planned final mystery arms itself, so the host cannot forget the one
-    // thing keeping the room in play. An explicit arming still wins.
+    // The last planned mystery always scores double. There is nothing for the
+    // host to arm, because the only way that goes wrong is forgetting to.
     const isPlannedFinal =
       this.meta.plannedRounds !== null && this.meta.roundsPlayed + 1 === this.meta.plannedRounds;
-    const multiplier = this.meta.doublePending || isPlannedFinal ? DOUBLE_MULTIPLIER : 1;
+    const multiplier = isPlannedFinal ? DOUBLE_MULTIPLIER : 1;
 
     // Freeze the standings now so the post-round leaderboard can show movement.
     this.previousRanks = Object.fromEntries(this.rankings().map((e) => [e.playerId, e.rank]));
@@ -847,8 +881,6 @@ export class EventRoom extends DurableObject<Env> {
       answers: {},
     };
     this.lastResult = null;
-    // Disarm on commit, so one arming can only ever buy one double round.
-    this.meta.doublePending = false;
     this.meta.phase = 'round';
 
     await this.schedule({ kind: 'clue', at: this.round.clueEndsAt });
@@ -1097,7 +1129,6 @@ export class EventRoom extends DurableObject<Env> {
     this.lastResult = null;
     this.previousRanks = {};
     this.meta.roundsPlayed = 0;
-    this.meta.doublePending = false;
     this.meta.phase = 'lobby';
     this.queue = shuffle(this.allMysteries().map((m) => m.id));
 
@@ -1168,7 +1199,6 @@ export class EventRoom extends DurableObject<Env> {
 
   private nextRoundMultiplier(): number {
     if (!this.meta) return 1;
-    if (this.meta.doublePending) return DOUBLE_MULTIPLIER;
     if (this.meta.plannedRounds === null) return 1;
     // A round still in flight has not incremented roundsPlayed yet, so the
     // next one to *start* is two ahead, not one. Without this the console
@@ -1303,6 +1333,13 @@ export class EventRoom extends DurableObject<Env> {
       totalMysteries: this.allMysteries().length,
       nextRoundMultiplier: this.nextRoundMultiplier(),
       plannedRounds: meta.plannedRounds,
+      pool: {
+        wanted: meta.plannedRounds ?? 0,
+        ai: Object.keys(this.library).length,
+        categories: meta.poolCategories,
+        difficulty: meta.poolDifficulty,
+        lastError: meta.poolError,
+      },
       autoAdvance: this.publicAutoAdvance(),
       autoAdvanceEnabled: meta.autoAdvanceEnabled,
       serverTime: Date.now(),

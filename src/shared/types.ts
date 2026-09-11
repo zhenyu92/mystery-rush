@@ -59,7 +59,11 @@ export function streakBonus(streak: number): number {
   return streak < 2 ? 0 : Math.min(STREAK_BONUS_MAX, (streak - 1) * STREAK_BONUS_STEP);
 }
 
-/** What a double-points round multiplies the whole round's XP by. */
+/**
+ * What the final round multiplies the whole round's XP by. Always the last
+ * planned mystery - the host does not arm it, because forgetting to is the
+ * only way it goes wrong.
+ */
 export const DOUBLE_MULTIPLIER = 2;
 
 export interface Mystery {
@@ -229,6 +233,8 @@ export interface Snapshot {
   nextRoundMultiplier: number;
   /** How many mysteries the host planned, if they said up front. */
   plannedRounds: number | null;
+  /** The pool the host asked for at creation, and how it is coming along. */
+  pool: PoolStatus;
   /** A countdown to the next phase, or null if the room is waiting on the host. */
   autoAdvance: AutoAdvance | null;
   /** Whether the event advances itself at all. Host can switch it off. */
@@ -250,7 +256,7 @@ export interface AutoAdvance {
 /** How long the answer and the distribution stay up before the standings. */
 export const RESULTS_AUTO_MS = 20_000;
 /** How long the standings stay up before the next mystery starts itself. */
-export const LEADERBOARD_AUTO_MS = 15_000;
+export const LEADERBOARD_AUTO_MS = 8_000;
 
 /** A mystery as offered to the host in the picker - no answer, no clues. */
 export interface MysteryChoice {
@@ -277,7 +283,6 @@ export type ServerMessage =
   | { type: 'error'; code: string; message: string };
 
 export type HostAction =
-  | 'set_double'
   | 'hold_auto'
   | 'set_auto_advance'
   | 'start_round'
@@ -298,7 +303,7 @@ export type ClientMessage =
       action: HostAction;
       mysteryId?: string;
       playerId?: string;
-      /** For `set_double`. Omit to toggle. */
+      /** For `set_auto_advance`. Omit to toggle. */
       enabled?: boolean;
     };
 
@@ -383,6 +388,22 @@ export interface MysteryCandidate {
   issues: ValidationIssue[];
   evaluation: MysteryEvaluation | null;
   status: CandidateStatus;
+}
+
+/**
+ * Progress of the automatic question pool.
+ *
+ * `ai` counts mysteries written and accepted for this event; the shortfall
+ * against `wanted` is covered by the built-in bank, which is why the game
+ * still runs when the model is having a bad day.
+ */
+export interface PoolStatus {
+  wanted: number;
+  ai: number;
+  categories: string[];
+  difficulty: Difficulty;
+  /** Set when the last preparation attempt failed, for the host to see. */
+  lastError: string | null;
 }
 
 export interface GenerationRequest {

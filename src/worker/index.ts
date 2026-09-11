@@ -81,6 +81,8 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const body = await readJson<{
       eventName?: string;
       plannedRounds?: number;
+      categories?: unknown;
+      difficulty?: unknown;
       autoAdvance?: boolean;
     }>(request);
     const eventName = sanitizeText(body?.eventName, EVENT_NAME_MAX, 'Mystery Rush Night');
@@ -90,6 +92,13 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       typeof body?.plannedRounds === 'number' && body.plannedRounds > 0
         ? Math.min(Math.floor(body.plannedRounds), MYSTERIES.length)
         : null;
+    // What the questions should be about. The host picks once, here, and the
+    // choice is stored on the room - so nothing later in the night can quietly
+    // change what this event is about.
+    const categories = Array.isArray(body?.categories)
+      ? body.categories.filter((c): c is string => typeof c === 'string' && isMysteryType(c))
+      : [];
+    const difficulty = isDifficulty(body?.difficulty) ? body.difficulty : 'medium';
     const hostToken = newToken();
 
     const code = await allocateCode(env);
@@ -102,16 +111,18 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
           eventName,
           hostToken,
           plannedRounds,
+          categories,
+          difficulty,
           autoAdvance: body?.autoAdvance,
         }),
       }),
     );
     if (!res.ok) return json({ error: 'init_failed', message: 'Could not create the event.' }, 500);
 
-    return json({ eventCode: code, eventName, hostToken, plannedRounds }, 201);
+    return json({ eventCode: code, eventName, hostToken, plannedRounds, categories, difficulty }, 201);
   }
 
-  const match = path.match(/^\/api\/events\/([^/]+)(\/join|\/mysteries|\/mysteries\/generate)?$/);
+  const match = path.match(/^\/api\/events\/([^/]+)(\/join|\/mysteries|\/mysteries\/generate|\/pool)?$/);
   if (match) {
     const code = normaliseCode(decodePathSegment(match[1]));
     if (!code) return json({ error: 'bad_code', message: 'That code does not look right.' }, 400);
@@ -124,6 +135,14 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       const res = await room(env, code).fetch(new Request('https://room/exists'));
       const info = (await res.json()) as { exists: boolean; eventName: string | null };
       return info.exists ? json(info) : json({ exists: false, message: 'No event with that code.' }, 404);
+    }
+
+    // POST /api/events/:code/pool - write another slice of this event's
+    // questions and put the good ones straight into play. No host review:
+    // the bar is applied here, on the server, and anything that misses it is
+    // simply not used.
+    if (match[2] === '/pool' && request.method === 'POST') {
+      return handlePool(request, env, code);
     }
 
     // POST /api/events/:code/mysteries/generate - the AI prep workflow.
@@ -172,6 +191,117 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   return json({ error: 'not_found' }, 404);
+}
+
+/**
+ * How many mysteries to write per request. Small on purpose: the host is
+ * watching a progress line in the lobby, and four batches that each land in
+ * twenty seconds read as progress where one that lands in eighty reads as a
+ * hang. It also bounds what a single model failure costs.
+ */
+const POOL_CHUNK = 3;
+
+/**
+ * Fill in part of this event's question pool, automatically.
+ *
+ * The categories, the difficulty and the target count all come from the room
+ * rather than from the request: they were settled when the event was created,
+ * and the caller does not get to change what the night is about. What comes
+ * back from the model is validated, judged, and only then - if it clears the
+ * bar in `mystery-pool.ts` - made playable. Anything short of the target is
+ * covered by the built-in bank, which is already queued behind these.
+ *
+ * The model call happens here in the Worker, never inside the Durable Object:
+ * generation takes tens of seconds, and the object is single-threaded, so
+ * doing it there would stall a live round.
+ */
+async function handlePool(request: Request, env: Env, code: string): Promise<Response> {
+  const body = await readJson<{ hostToken?: string }>(request);
+  const hostToken = body?.hostToken ?? '';
+
+  const verify = await room(env, code).fetch(
+    new Request('https://room/verify-host', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hostToken }),
+    }),
+  );
+  if (!verify.ok) return json({ error: 'unauthorised', message: 'Host credentials required.' }, 403);
+
+  const spec = (await verify.json()) as {
+    existingAnswers?: string[];
+    poolCategories?: string[];
+    poolDifficulty?: string;
+    wanted?: number;
+    have?: number;
+  };
+
+  const categories = (spec.poolCategories ?? []).filter(isMysteryType);
+  const wanted = Math.max(0, Math.floor(spec.wanted ?? 0));
+  const have = Math.max(0, Math.floor(spec.have ?? 0));
+  const missing = wanted - have;
+
+  if (categories.length === 0 || missing <= 0) {
+    return json({ added: 0, have, wanted, done: true, error: null });
+  }
+
+  const difficulty = isDifficulty(spec.poolDifficulty) ? spec.poolDifficulty : 'medium';
+  const count = Math.min(POOL_CHUNK, MAX_POOL_SIZE, missing);
+
+  let pool;
+  try {
+    pool = await buildMysteryPool(env, {
+      categories,
+      difficulty,
+      count,
+      existingAnswers: spec.existingAnswers,
+      autoAccept: true,
+    });
+  } catch (err) {
+    console.error('[ai] pool preparation failed:', err);
+    await recordPool(env, code, hostToken, [], 'AI generation is temporarily unavailable.');
+    return json({ added: 0, have, wanted, done: false, error: 'AI generation is temporarily unavailable.' }, 503);
+  }
+
+  const accepted = pool.candidates.map((c) => c.mystery);
+  // A batch that produced nothing usable twice over is not going to start
+  // working on the next click, so say so and stop rather than burning the
+  // host's lobby time. The built-in bank covers the difference.
+  const stalled = accepted.length === 0;
+  const error =
+    pool.error ??
+    (stalled ? `Wrote ${pool.rejected.length} questions that did not pass the quality check.` : null);
+
+  const stored = await recordPool(env, code, hostToken, accepted, error);
+  if (!stored) return json({ error: 'store_failed', message: 'Could not save the questions.' }, 500);
+
+  const now = have + accepted.length;
+  return json({
+    added: accepted.length,
+    rejected: pool.rejected.length,
+    have: now,
+    wanted,
+    done: now >= wanted || stalled,
+    error,
+  });
+}
+
+/** Hand accepted mysteries to the room, along with anything to tell the host. */
+async function recordPool(
+  env: Env,
+  code: string,
+  hostToken: string,
+  mysteries: unknown[],
+  error: string | null,
+): Promise<boolean> {
+  const res = await room(env, code).fetch(
+    new Request('https://room/library', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hostToken, mysteries, poolError: error }),
+    }),
+  );
+  return res.ok;
 }
 
 /**

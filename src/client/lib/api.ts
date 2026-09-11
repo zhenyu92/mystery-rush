@@ -1,9 +1,4 @@
-import type {
-  Difficulty,
-  Mystery,
-  MysteryCandidate,
-  ValidationIssue,
-} from '../../shared/types';
+import type { Difficulty } from '../../shared/types';
 
 export class ApiError extends Error {
   constructor(
@@ -42,6 +37,19 @@ export interface CreatedEvent {
   eventName: string;
   hostToken: string;
   plannedRounds: number | null;
+  categories: string[];
+  difficulty: Difficulty;
+}
+
+/** One slice of pool preparation, as reported back to the lobby. */
+export interface PoolProgress {
+  added: number;
+  rejected?: number;
+  have: number;
+  wanted: number;
+  /** True when there is nothing further worth asking for. */
+  done: boolean;
+  error: string | null;
 }
 
 export interface JoinedEvent {
@@ -54,10 +62,29 @@ export interface JoinedEvent {
 }
 
 export const api = {
-  createEvent: (eventName: string, plannedRounds: number | null) =>
+  createEvent: (body: {
+    eventName: string;
+    plannedRounds: number | null;
+    categories: string[];
+    difficulty: Difficulty;
+  }) =>
     request<CreatedEvent>('/api/events', {
       method: 'POST',
-      body: JSON.stringify({ eventName, plannedRounds }),
+      body: JSON.stringify(body),
+    }),
+
+  /**
+   * Write the next few of this event's questions.
+   *
+   * One call is one small batch, so the lobby can show the pool filling up
+   * rather than a spinner that might be stuck. What to write is decided by the
+   * server from what the host chose at creation; all this sends is the
+   * credential.
+   */
+  preparePool: (code: string, hostToken: string) =>
+    request<PoolProgress>(`/api/events/${encodeURIComponent(code)}/pool`, {
+      method: 'POST',
+      body: JSON.stringify({ hostToken }),
     }),
 
   lookupEvent: (code: string) =>
@@ -70,32 +97,4 @@ export const api = {
     }),
 
   mysteryStats: () => request<{ total: number; byType: Record<string, number> }>('/api/mysteries'),
-
-  /**
-   * Ask the server to generate candidate mysteries. The browser never talks
-   * to a model directly - this is a Worker route that holds the prompt, the
-   * validation and the host's credentials.
-   */
-  generateMysteries: (
-    code: string,
-    body: { hostToken: string; categories: string[]; difficulty: Difficulty; count: number },
-  ) =>
-    request<PoolResponse>(`/api/events/${encodeURIComponent(code)}/mysteries/generate`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-
-  /** Approve one reviewed mystery into this event, making it playable. */
-  approveMystery: (code: string, body: { hostToken: string; mystery: Mystery }) =>
-    request<{ ok: boolean; librarySize: number }>(
-      `/api/events/${encodeURIComponent(code)}/mysteries`,
-      { method: 'POST', body: JSON.stringify(body) },
-    ),
 };
-
-export interface PoolResponse {
-  candidates: MysteryCandidate[];
-  rejected: Array<{ issues: ValidationIssue[]; answer: string }>;
-  error: string | null;
-  attempts: number;
-}

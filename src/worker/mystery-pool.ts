@@ -39,6 +39,58 @@ export interface PoolResult {
   attempts: number;
 }
 
+/**
+ * The bar a mystery must clear to go straight into an event with nobody
+ * reading it first.
+ *
+ * Deterministic rules come first and carry the veto: `docs/mystery-evaluation.md`
+ * found the model rating a two-clue-thin Shawshank question 96/100, so the
+ * evaluator is treated as a second opinion that can only ever *lower* the
+ * verdict, never rescue a candidate the rules were unhappy with. That is why
+ * warnings - not just errors - are disqualifying here, even though a host
+ * reviewing by hand would have been allowed to wave them through.
+ *
+ * A missing evaluation is a fail, not a pass. If the judge could not be
+ * reached, nobody has read the question, and the built-in bank is a better
+ * answer than an unread one.
+ */
+export function meetsAutoAcceptBar(candidate: MysteryCandidate): boolean {
+  if (candidate.issues.length > 0) return false;
+  const e = candidate.evaluation;
+  if (!e) return false;
+  return e.approved && e.score >= AUTO_ACCEPT_SCORE && e.ambiguity <= AUTO_ACCEPT_AMBIGUITY;
+}
+
+export const AUTO_ACCEPT_SCORE = 75;
+export const AUTO_ACCEPT_AMBIGUITY = 0.3;
+
+/**
+ * Why a candidate missed the automatic bar, in the same shape as a validation
+ * issue so the host sees one consistent list rather than two vocabularies.
+ */
+function describeRejection(candidate: MysteryCandidate): ValidationIssue[] {
+  const issues = [...candidate.issues];
+  const e = candidate.evaluation;
+  if (!e) {
+    issues.push({
+      code: 'not_evaluated',
+      severity: 'error',
+      message: 'Could not be checked for quality, so it was not used.',
+    });
+    return issues;
+  }
+  if (!e.approved) {
+    issues.push({ code: 'not_approved', severity: 'error', message: 'Did not pass the quality check.' });
+  }
+  if (e.score < AUTO_ACCEPT_SCORE) {
+    issues.push({ code: 'low_score', severity: 'error', message: `Scored ${e.score}, below ${AUTO_ACCEPT_SCORE}.` });
+  }
+  if (e.ambiguity > AUTO_ACCEPT_AMBIGUITY) {
+    issues.push({ code: 'ambiguous', severity: 'error', message: 'More than one option could be right.' });
+  }
+  return issues;
+}
+
 function tidy(value: unknown, max: number): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
@@ -68,6 +120,11 @@ export interface BuildPoolOptions {
   promptVariant?: 'production' | 'basic';
   /** Skip the AI evaluation pass. The offline evaluation scores separately. */
   skipEvaluation?: boolean;
+  /**
+   * Only return candidates that clear {@link meetsAutoAcceptBar}, replacing
+   * the ones that do not. Used when there is no host reading the output.
+   */
+  autoAccept?: boolean;
 }
 
 export async function buildMysteryPool(env: Env, opts: BuildPoolOptions): Promise<PoolResult> {
@@ -125,21 +182,36 @@ export async function buildMysteryPool(env: Env, opts: BuildPoolOptions): Promis
         continue;
       }
 
+      const candidate: MysteryCandidate = {
+        mystery,
+        difficulty: opts.difficulty,
+        issues,
+        evaluation: null,
+        status: 'pending',
+      };
+
+      // Judge only what passed the rules: evaluating an already-broken
+      // mystery wastes the host's time and invites the model to excuse a
+      // fault the rules already caught. A failed evaluation never loses a
+      // mystery that is otherwise fine - it just leaves it unjudged.
+      if (!opts.skipEvaluation) {
+        try {
+          candidate.evaluation = await evaluateMystery(env, mystery, opts.difficulty);
+        } catch {
+          candidate.evaluation = null;
+        }
+      }
+
+      if (opts.autoAccept && !meetsAutoAcceptBar(candidate)) {
+        rejected.push({ issues: describeRejection(candidate), answer: mystery.answer });
+        continue;
+      }
+
+      // Only claim the answer once it is actually kept, so a rejected
+      // candidate does not stop a better one using the same subject.
       seenIds.add(mystery.id);
       seenAnswers.add(mystery.answer.toLowerCase());
-      candidates.push({ mystery, difficulty: opts.difficulty, issues, evaluation: null, status: 'pending' });
-    }
-  }
-
-  // Evaluate only what passed the rules, and never let a failed evaluation
-  // lose a mystery that is otherwise fine.
-  if (!opts.skipEvaluation) {
-    for (const candidate of candidates) {
-      try {
-        candidate.evaluation = await evaluateMystery(env, candidate.mystery, candidate.difficulty);
-      } catch {
-        candidate.evaluation = null;
-      }
+      candidates.push(candidate);
     }
   }
 

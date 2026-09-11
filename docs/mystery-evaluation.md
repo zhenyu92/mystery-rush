@@ -137,9 +137,26 @@ Three design choices this settles, each of which was provisional before the run:
    should not be dropped.
 2. **The avoid-list of existing answers stays.** Duplication is the one failure the prompt does not
    fix on its own, so passing answers the event already has is load-bearing rather than belt-and-braces.
-3. **Nothing auto-approves, and the score is not promoted to a gate.** This was the open question
-   going in. A judge that rates "Stars Tim Robbins and Morgan Freeman" at 96 cannot be trusted to
-   skip human review, so the approve button stays.
+3. **The evaluator score is not a gate on its own.** This was the open question going in. A judge
+   that rates "Stars Tim Robbins and Morgan Freeman" at 96 cannot be trusted to decide what a room
+   sees.
+
+### Postscript: the approve button went away anyway
+
+The host console no longer has a review step — questions are written in the lobby and go straight
+into play. That is a product decision, and it does not make the finding above less true, so the
+automatic bar in `mystery-pool.ts` is built around it rather than in spite of it:
+
+- **The deterministic rules carry the veto.** A validation *warning* is disqualifying under
+  auto-accept, even though a host reading the candidate would have been allowed to weigh it. The
+  rules found the clue-craft failures in §7; the evaluator did not.
+- **The evaluator can only lower the verdict, never raise it.** It is an AND with the rules
+  (`approved`, `score >= 75`, `ambiguity <= 0.3`), so a generous score cannot rescue anything.
+- **An unjudged mystery fails.** If the evaluation call could not be made, nobody has read the
+  question at all, and a built-in one is a better answer than an unread one.
+- **Rejection is cheap.** A candidate that misses the bar is replaced within the same request, and a
+  shortfall falls back to the 25 hand-written mysteries. The cost of the bar being strict is a
+  built-in question; the cost of it being lax is on the projector.
 
 ## 9. Limitations
 

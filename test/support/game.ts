@@ -56,9 +56,13 @@ export function muteLogs(): void {
   mock.method(console, 'error', () => {});
 }
 
-export async function seatTable(nicknames: string[] = ['Ada', 'Grace']): Promise<Table> {
+export async function seatTable(
+  nicknames: string[] = ['Ada', 'Grace'],
+  /** Anything else the event should be created with, e.g. `plannedRounds`. */
+  options: Record<string, unknown> = {},
+): Promise<Table> {
   const harness = createHarness();
-  const event = await createEvent(harness, 'Test Event');
+  const event = await createEvent(harness, 'Test Event', options);
 
   const host = (await connect(harness, event.eventCode, {
     role: 'host',

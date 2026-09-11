@@ -277,10 +277,11 @@ check(
 check('all clients advanced together', pc.last?.snapshot.round.currentClue === 2);
 
 host.errors.length = 0;
+// The action is gone: nobody arms double points any more, the last planned
+// mystery simply is one. A stale client sending it must change nothing.
 send(host, { type: 'host', action: 'set_double', enabled: true });
 await sleep(600);
-check('arming double mid-clue is refused', host.errors.some((e) => e.code === 'round_running'));
-check('and the live round is unaffected', pb.last.snapshot.round.pointsMultiplier === 1);
+check('there is no way to arm double points by hand', pb.last.snapshot.round.pointsMultiplier === 1);
 
 console.log('  (pausing 4s to confirm the clock freezes)');
 send(host, { type: 'host', action: 'pause' });
@@ -420,6 +421,41 @@ send(h3, { type: 'host', action: 'end_round' });
 await waitFor(pn, (s) => s.phase === 'results', 8000, 'manual results');
 check('with it off, results wait for the host', pn.last?.snapshot.autoAdvance === null);
 [h3, pn].forEach((c) => { try { c.ws.close(); } catch {} });
+
+// ------------------------------------------------------- the question pool
+// No inference is spent here on purpose: this checks the wiring and the
+// fallback, which are what decide whether the night runs at all. Whether the
+// model writes good questions is settled in docs/mystery-evaluation.md.
+console.log('=== 12. The question pool prepares itself ===');
+const ev4 = await post('/api/events', {
+  eventName: 'Pool Test',
+  plannedRounds: 2,
+  categories: [],
+  autoAdvance: false,
+});
+const CODE4 = ev4.body.eventCode;
+const pip = (await post(`/api/events/${CODE4}/join`, { nickname: 'Pip' })).body;
+const h4 = connect(`code=${CODE4}&role=host&hostToken=${ev4.body.hostToken}`);
+const pp = connect(`code=${CODE4}&role=player&playerId=${pip.playerId}&playerToken=${pip.playerToken}`);
+await Promise.all([waitOpen(h4), waitOpen(pp)]);
+await sleep(600);
+check('the snapshot carries the pool the host asked for',
+  h4.last?.snapshot.pool?.wanted === 2, JSON.stringify(h4.last?.snapshot.pool));
+check('with nothing written yet', h4.last?.snapshot.pool?.ai === 0);
+
+const emptyPool = await post(`/api/events/${CODE4}/pool`, { hostToken: ev4.body.hostToken });
+check('an event with no categories asks the model for nothing',
+  emptyPool.status === 200 && emptyPool.body.added === 0 && emptyPool.body.done === true,
+  JSON.stringify(emptyPool.body));
+
+const strangerPool = await post(`/api/events/${CODE4}/pool`, { hostToken: 'not-the-host' });
+check('and a stranger cannot spend the account’s inference', strangerPool.status === 403);
+
+send(h4, { type: 'host', action: 'start_round' });
+await waitFor(h4, (s) => s.phase === 'round', 4000, 'fallback round');
+check('the built-in bank still carries an event with no AI questions',
+  h4.last?.snapshot.round?.roundIndex === 1);
+[h4, pp].forEach((c) => { try { c.ws.close(); } catch {} });
 
 console.log(`\n================  ${pass} passed, ${fail} failed  ================\n`);
 [host, pa, pb, pc, disp].forEach((s) => { try { s.ws.close(); } catch {} });

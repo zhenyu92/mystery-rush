@@ -1851,6 +1851,22 @@ p {
   cursor: not-allowed;
 }
 
+/* The lobby's "writing your questions" bar. A real bar rather than a spinner,
+   because the host needs to know whether to keep waiting or start anyway. */
+.poolbar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  overflow: hidden;
+}
+.poolbar__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--cyan), var(--good));
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 /* Collapsed by default: the generator is a preparation tool, and the picker
    below it is what the host uses every round. */
 .aitoggle {

@@ -72,9 +72,10 @@ sayable in one sentence:
   purpose: a multiplier scales with the base, so it would pay the leader (who
   answers early, for 500) more than the chaser (who answers on clue 4, for 200)
   — the wrong shape for a game that should stay live to the last question.
-- **The final mystery scores double.** Tell the host how many mysteries you plan
-  to run when creating the event and the last one arms itself, so it cannot be
-  forgotten; there is also a manual toggle. It is announced *before* the round,
+- **The final mystery scores double.** Say how many mysteries you plan to run
+  when creating the event and the last one simply is the double round. There is
+  no toggle: the only way the mechanic ever failed was a host with a microphone
+  in their hand forgetting to arm it. It is announced *before* the round,
   because someone 800 behind needs to know the gap can still be closed.
 
 Both are applied at round end as `(base + streakBonus) × multiplier`, never at
@@ -114,10 +115,15 @@ podium says so: **"Won on speed - 6.1s avg vs 8.4s"**.
 ### Pacing
 
 Nothing used to move between rounds until the host clicked, twice. The room now
-advances itself — 20s on the answer, then 15s on the standings — with the
-countdown drawn from server timestamps like everything else. The host gets a
-**Hold** button while a countdown is live, and a switch to turn it off for the
-night.
+advances itself — 20s on the answer, then 8s on the standings — with the
+countdown drawn from server timestamps like everything else. The host is not
+asked to configure any of it: **Pause** freezes the clock for the whole room for
+as long as they are talking, and **Hold** stops a between-round countdown. Those
+are the only two pacing controls, and neither has to be set up in advance.
+
+Eight seconds on the standings rather than fifteen because the standings are a
+beat, not a scene — long enough to find your own name, short enough that the room
+does not start talking.
 
 It never auto-advances into the final results. Ending the event is the host's
 moment with a prize in their hand, not a timer's.
@@ -255,11 +261,12 @@ every screen into `test/screens/`. Some of this UI is only wrong in ways you hav
 
 ## AI Mystery Master
 
-Writing ten mysteries by hand takes an organiser about half an hour. The host console can generate
-a pool instead, in one or more categories, and then makes them earn their place.
+Writing ten mysteries by hand takes an organiser about half an hour. Creating an event asks three
+questions instead — a name, how many mysteries, and what they should be about — and the questions
+write themselves in the lobby while the room is still scanning the QR code.
 
 ```
-host picks categories, difficulty, how many
+host: name, how many, which categories
         |
    Worker  ->  Workers AI          generation, in the Worker and never in the
         |                          Durable Object: object requests are
@@ -275,22 +282,37 @@ host picks categories, difficulty, how many
         |                          rules cannot judge: is the progression
         |                          real, could another option be right
         v
-   the host reads it and approves  nothing is playable before this
-        |
+   the auto-accept bar             zero warnings, approved, score >= 75,
+        |                          ambiguity <= 0.3 - anything short is
+        |                          replaced, not shipped
         v
-   the existing game engine
+   the existing game engine        accepted mysteries go to the FRONT of the
+                                   queue, so the 25 built-ins are a fallback
 ```
 
 The order is the point. Anything a rule can settle is settled by a rule, because the alternative is
 asking the same kind of system that produced the content whether the content is good. The model
 only gets asked about the parts that need judgement.
 
+**Why the bar is stricter than a host would be.** A host reading a candidate could weigh a warning
+and wave it through. Nobody is reading now, so the deterministic rules carry the veto and the
+evaluator can only ever lower the verdict, never rescue a candidate: a validation *warning* is
+disqualifying, and a mystery the evaluator could not be reached about is treated as a fail. That is
+a direct consequence of [`docs/mystery-evaluation.md`](docs/mystery-evaluation.md) §7, which found
+the model rating a thin two-clue question 96/100 — an evaluator that generous cannot be the last
+word on its own.
+
+**A shortfall is not a failure.** Accepted mysteries are pushed to the front of the round queue and
+the built-in bank stays behind them, so an event that asked for ten and got seven simply plays three
+built-ins, and an event where Workers AI never answers plays exactly as it did before any of this
+existed. The lobby says which happened; nothing blocks on it.
+
 **The AI never touches the running game.** The clock, clue progression, one-guess enforcement,
 scoring, the leaderboard and the hidden answer all stay exactly where they were. If Workers AI is
 unavailable the host loses the generator and nothing else — the 25 built-in mysteries and any
 running event are untouched.
 
-Approved mysteries live in the event's own library in Durable Object storage, not D1: the round
+Accepted mysteries live in the event's own library in Durable Object storage, not D1: the round
 loop resolves a mystery synchronously, so it has to survive hibernation without a round trip.
 `resolveMystery` checks that library and falls back to the built-in bank, so a hand-written mystery
 behaves exactly as it always did.
