@@ -7,7 +7,13 @@
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 
-import { CLUE_COUNT, CLUE_DURATION_MS, INTRO_DURATION_MS, pointsForClue } from '../src/shared/types';
+import {
+  CLUE_COUNT,
+  CLUE_DURATION_MS,
+  INTRO_DURATION_MS,
+  pointsForClue,
+  streakBonus,
+} from '../src/shared/types';
 import type { Snapshot } from '../src/shared/types';
 import {
   answerFor,
@@ -304,7 +310,10 @@ describe('ending a round', () => {
     const ada = board.find((e) => e.nickname === 'Ada')!;
     const grace = board.find((e) => e.nickname === 'Grace')!;
 
-    assert.equal(ada.score, pointsForClue(1) * 2);
+    // Ada answered correctly twice running, so the second one also pays the
+    // two-in-a-row bonus. Grace missed the first, so her streak is back to
+    // one and she gets the clue value alone.
+    assert.equal(ada.score, pointsForClue(1) * 2 + streakBonus(2));
     assert.equal(ada.streak, 2);
     assert.equal(ada.correctAnswers, 2);
     assert.equal(grace.score, pointsForClue(1));

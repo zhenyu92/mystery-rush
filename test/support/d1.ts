@@ -24,6 +24,8 @@ export interface PlayerRow {
   score: number;
   correct_answers: number;
   mysteries_played: number;
+  best_streak: number;
+  total_response_ms: number;
   joined_at: number;
 }
 
@@ -32,6 +34,7 @@ export interface RoundRow {
   event_code: string;
   mystery_id: string;
   round_index: number;
+  points_multiplier: number;
   status: string;
   started_at: number;
   ended_at: number | null;
@@ -46,6 +49,9 @@ export interface AnswerRow {
   clue_number: number;
   is_correct: number;
   points_awarded: number;
+  bonus_points: number;
+  multiplier: number;
+  response_ms: number;
 }
 
 export class FakeD1 {
@@ -173,18 +179,23 @@ export class FakeStatement {
         score: Number(a[3]),
         correct_answers: Number(a[4]),
         mysteries_played: Number(a[5]),
+        best_streak: Number(a[6]),
+        total_response_ms: Number(a[7]),
         // ON CONFLICT does not touch joined_at, matching the real statement.
-        joined_at: existing ? existing.joined_at : Number(a[6]),
+        joined_at: existing ? existing.joined_at : Number(a[8]),
       });
       return { success: true };
     }
 
-    if (/^UPDATE players SET score = 0/.test(this.sql)) {
+    // The real statement spans lines, so match across whitespace.
+    if (/^UPDATE players\s+SET score = 0/.test(this.sql)) {
       for (const row of this.db.players.values()) {
         if (row.event_code === String(a[0])) {
           row.score = 0;
           row.correct_answers = 0;
           row.mysteries_played = 0;
+          row.best_streak = 0;
+          row.total_response_ms = 0;
         }
       }
       return { success: true };
@@ -198,8 +209,9 @@ export class FakeStatement {
           event_code: String(a[1]),
           mystery_id: String(a[2]),
           round_index: Number(a[3]),
+          points_multiplier: Number(a[4]),
           status: 'active',
-          started_at: Number(a[4]),
+          started_at: Number(a[5]),
           ended_at: null,
         });
       }
@@ -227,6 +239,9 @@ export class FakeStatement {
           clue_number: Number(a[5]),
           is_correct: Number(a[6]),
           points_awarded: Number(a[7]),
+          bonus_points: Number(a[8]),
+          multiplier: Number(a[9]),
+          response_ms: Number(a[10]),
         });
       }
       return { success: true };
