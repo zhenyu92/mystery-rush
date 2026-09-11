@@ -40,6 +40,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The other half of the gate: the worker's rules are covered by the
+      # suite in test/, and a rule that broke must not reach the projector.
+      - name: Test
+        run: npm test
+
       - name: Build client
         run: npm run build
 
