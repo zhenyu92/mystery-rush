@@ -14,6 +14,7 @@ import { useGameSocket } from '../lib/useGameSocket';
 import { Brand, ConnectionDot, Modal, TimerRing, Toast, formatXp, plural } from '../components/common';
 import { AnswerBars, ClueList, CluePips, Leaderboard, Podium } from '../components/game';
 import { Confetti } from '../components/Confetti';
+import { AiGenerator } from '../components/AiGenerator';
 import { QrCode } from '../components/QrCode';
 
 export function Host({
@@ -557,6 +558,16 @@ function HostConsole({
           </div>
 
           {phase !== 'round' ? (
+            <AiGenerator
+              code={code}
+              hostToken={hostToken}
+              onApproved={() => {
+                /* The room re-broadcasts its catalog, so the picker updates itself. */
+              }}
+            />
+          ) : null}
+
+          {phase !== 'round' ? (
             <div className="card stack">
               <div className="card__title">Pick the next mystery</div>
               <p className="tiny dim" style={{ margin: 0 }}>
@@ -573,7 +584,10 @@ function HostConsole({
                     <span>{typeLabel(m.type).emoji}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: 'block' }}>{m.title}</span>
-                      <span className="picker__type">{typeLabel(m.type).label}</span>
+                      <span className="picker__type">
+                        {typeLabel(m.type).label}
+                        {m.source === 'ai' ? ' · ✨ AI' : ''}
+                      </span>
                     </span>
                     {m.used ? <span className="tiny dim">played</span> : null}
                   </button>

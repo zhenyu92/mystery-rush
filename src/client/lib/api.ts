@@ -1,3 +1,10 @@
+import type {
+  Difficulty,
+  Mystery,
+  MysteryCandidate,
+  ValidationIssue,
+} from '../../shared/types';
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -63,4 +70,32 @@ export const api = {
     }),
 
   mysteryStats: () => request<{ total: number; byType: Record<string, number> }>('/api/mysteries'),
+
+  /**
+   * Ask the server to generate candidate mysteries. The browser never talks
+   * to a model directly - this is a Worker route that holds the prompt, the
+   * validation and the host's credentials.
+   */
+  generateMysteries: (
+    code: string,
+    body: { hostToken: string; categories: string[]; difficulty: Difficulty; count: number },
+  ) =>
+    request<PoolResponse>(`/api/events/${encodeURIComponent(code)}/mysteries/generate`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** Approve one reviewed mystery into this event, making it playable. */
+  approveMystery: (code: string, body: { hostToken: string; mystery: Mystery }) =>
+    request<{ ok: boolean; librarySize: number }>(
+      `/api/events/${encodeURIComponent(code)}/mysteries`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
 };
+
+export interface PoolResponse {
+  candidates: MysteryCandidate[];
+  rejected: Array<{ issues: ValidationIssue[]; answer: string }>;
+  error: string | null;
+  attempts: number;
+}

@@ -6,10 +6,11 @@
  * /api/* or /ws is served from the built React app.
  */
 
-import { EVENT_NAME_MAX } from '../shared/types';
+import { EVENT_NAME_MAX, MAX_POOL_SIZE, isDifficulty, isMysteryType } from '../shared/types';
 import { eventExists } from './db';
 import type { Env } from './db';
 import { MYSTERIES, generateEventCode, newToken, sanitizeText } from './game';
+import { buildMysteryPool } from './mystery-pool';
 
 export { EventRoom } from './event-room';
 
@@ -110,7 +111,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json({ eventCode: code, eventName, hostToken, plannedRounds }, 201);
   }
 
-  const match = path.match(/^\/api\/events\/([^/]+)(\/join)?$/);
+  const match = path.match(/^\/api\/events\/([^/]+)(\/join|\/mysteries|\/mysteries\/generate)?$/);
   if (match) {
     const code = normaliseCode(decodePathSegment(match[1]));
     if (!code) return json({ error: 'bad_code', message: 'That code does not look right.' }, 400);
@@ -125,8 +126,33 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       return info.exists ? json(info) : json({ exists: false, message: 'No event with that code.' }, 404);
     }
 
+    // POST /api/events/:code/mysteries/generate - the AI prep workflow.
+    //
+    // The model call happens here in the Worker, never inside the Durable
+    // Object: generation takes tens of seconds, and the object is
+    // single-threaded, so doing it there would stall a live round.
+    if (match[2] === '/mysteries/generate' && request.method === 'POST') {
+      return handleGenerate(request, env, code);
+    }
+
+    // POST /api/events/:code/mysteries - host approves one into the event.
+    if (match[2] === '/mysteries' && request.method === 'POST') {
+      const body = await readJson<Record<string, unknown>>(request);
+      const res = await room(env, code).fetch(
+        new Request('https://room/library', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body ?? {}),
+        }),
+      );
+      return new Response(res.body, {
+        status: res.status,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      });
+    }
+
     // POST /api/events/:code/join
-    if (match[2] && request.method === 'POST') {
+    if (match[2] === '/join' && request.method === 'POST') {
       const body = await readJson<Record<string, unknown>>(request);
       const res = await room(env, code).fetch(
         new Request('https://room/join', {
@@ -146,6 +172,69 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   return json({ error: 'not_found' }, 404);
+}
+
+/**
+ * Generate a pool of candidate mysteries for a host to review.
+ *
+ * Nothing this returns is playable yet - the host approves each one
+ * separately. An AI outage is reported and nothing else changes, so the
+ * built-in bank and any running game carry on untouched.
+ */
+async function handleGenerate(request: Request, env: Env, code: string): Promise<Response> {
+  const body = await readJson<{
+    hostToken?: string;
+    categories?: unknown;
+    difficulty?: unknown;
+    count?: unknown;
+  }>(request);
+
+  // Authorise before spending a model call on someone's behalf.
+  const verify = await room(env, code).fetch(
+    new Request('https://room/verify-host', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ hostToken: body?.hostToken ?? '' }),
+    }),
+  );
+  if (!verify.ok) {
+    return json({ error: 'unauthorised', message: 'Host credentials required.' }, 403);
+  }
+  const { existingAnswers } = (await verify.json()) as { existingAnswers?: string[] };
+
+  const categories = Array.isArray(body?.categories)
+    ? body.categories.filter((c): c is string => typeof c === 'string' && isMysteryType(c))
+    : [];
+  if (categories.length === 0) {
+    return json({ error: 'no_categories', message: 'Pick at least one category.' }, 400);
+  }
+
+  const difficulty = isDifficulty(body?.difficulty) ? body.difficulty : 'medium';
+  const requested = Number(body?.count);
+  const count = Number.isFinite(requested)
+    ? Math.max(1, Math.min(MAX_POOL_SIZE, Math.floor(requested)))
+    : 1;
+
+  try {
+    const pool = await buildMysteryPool(env, {
+      categories,
+      difficulty,
+      count,
+      existingAnswers,
+    });
+    return json(pool);
+  } catch (err) {
+    console.error('[ai] generation failed:', err);
+    return json(
+      {
+        candidates: [],
+        rejected: [],
+        error: 'AI generation is temporarily unavailable.',
+        attempts: 0,
+      },
+      503,
+    );
+  }
 }
 
 /**

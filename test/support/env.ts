@@ -167,9 +167,52 @@ export class FakeDurableObjectState {
 
 // ------------------------------------------------------------- environment
 
+/**
+ * Scripted Workers AI. Real inference is never called from the unit suite -
+ * it costs money, needs credentials and is not deterministic - so tests push
+ * the exact response (or error) they want the model to give.
+ */
+export class FakeAi {
+  /** Queued replies, consumed in order. A function may throw to simulate failure. */
+  readonly queue: Array<unknown | (() => unknown)> = [];
+  /** Every input the worker sent, for asserting on prompts and schemas. */
+  readonly calls: Array<Record<string, unknown>> = [];
+
+  /** Reply with an already-parsed object, as JSON-schema mode really does. */
+  push(response: unknown): this {
+    this.queue.push(response);
+    return this;
+  }
+
+  /** Reply with a raw string, as plain text mode does. */
+  pushRaw(text: string): this {
+    this.queue.push({ __raw: text });
+    return this;
+  }
+
+  pushError(message = 'model exploded'): this {
+    this.queue.push(() => {
+      throw new Error(message);
+    });
+    return this;
+  }
+
+  async run(model: string, input: Record<string, unknown>): Promise<{ response: unknown }> {
+    this.calls.push({ model, ...input });
+    if (this.queue.length === 0) throw new Error('FakeAi: no queued response');
+    const next = this.queue.shift()!;
+    if (typeof next === 'function') return (next as () => never)();
+    if (next && typeof next === 'object' && '__raw' in (next as object)) {
+      return { response: (next as { __raw: string }).__raw };
+    }
+    return { response: next };
+  }
+}
+
 export interface Harness {
   env: Env;
   db: FakeD1;
+  ai: FakeAi;
   /** Every room the worker has touched, keyed by event code. */
   rooms: Map<string, { room: EventRoom; state: FakeDurableObjectState }>;
   /** Requests the assets fetcher was asked for (everything non-API). */
@@ -184,11 +227,13 @@ export interface Harness {
 
 export function createHarness(): Harness {
   const db = new FakeD1();
+  const ai = new FakeAi();
   const rooms = new Map<string, { room: EventRoom; state: FakeDurableObjectState }>();
   const assetRequests: Request[] = [];
 
   const env = {
     DB: db,
+    AI: ai,
     EVENT_ROOM: {
       idFromName(name: string) {
         return { name, toString: () => name };
@@ -218,6 +263,7 @@ export function createHarness(): Harness {
   const harness: Harness = {
     env,
     db,
+    ai,
     rooms,
     assetRequests,
     async settle() {

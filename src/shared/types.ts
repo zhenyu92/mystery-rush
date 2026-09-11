@@ -258,6 +258,8 @@ export interface MysteryChoice {
   type: string;
   title: string;
   used: boolean;
+  /** Where it came from, so the host picker can label AI mysteries. */
+  source: 'builtin' | 'ai';
 }
 
 export type ServerMessage =
@@ -320,6 +322,74 @@ export const MYSTERY_TYPE_LABELS: Record<string, { label: string; emoji: string 
   space: { label: 'Space', emoji: '\u{1F680}' },
   sport: { label: 'Sport', emoji: '\u{1F3C0}' },
 };
+
+/**
+ * The canonical category list, derived from the labels above so the two can
+ * never drift. The game itself still treats `type` as a free string - this
+ * is the allow-list for *generated* mysteries, which are untrusted input.
+ */
+export const MYSTERY_TYPES = Object.keys(MYSTERY_TYPE_LABELS);
+
+export function isMysteryType(value: unknown): value is string {
+  return typeof value === 'string' && Object.hasOwn(MYSTERY_TYPE_LABELS, value);
+}
+
+export const DIFFICULTIES = ['easy', 'medium', 'hard'] as const;
+export type Difficulty = (typeof DIFFICULTIES)[number];
+
+export function isDifficulty(value: unknown): value is Difficulty {
+  return typeof value === 'string' && (DIFFICULTIES as readonly string[]).includes(value);
+}
+
+/** How much AI-generated text we are willing to render. */
+export const CLUE_MIN_LENGTH = 10;
+export const CLUE_MAX_LENGTH = 200;
+export const ANSWER_MAX_LENGTH = 60;
+export const TITLE_MAX_LENGTH = 48;
+export const OPTIONS_MIN = 4;
+export const OPTIONS_MAX = 6;
+
+/** Worst-case bound on one generation request, so a host cannot spend the day. */
+export const MAX_POOL_SIZE = 10;
+
+export type IssueSeverity = 'error' | 'warning';
+
+export interface ValidationIssue {
+  code: string;
+  severity: IssueSeverity;
+  message: string;
+}
+
+/** The evaluator's verdict. Advisory: it never gates the game, only the host. */
+export interface MysteryEvaluation {
+  approved: boolean;
+  /** 0-100. */
+  score: number;
+  /** 0-1, higher means more than one option could defensibly be right. */
+  ambiguity: number;
+  difficulty: Difficulty;
+  feedback: string[];
+}
+
+export type CandidateStatus = 'pending' | 'approved' | 'rejected';
+
+/**
+ * A generated mystery on its way through review. `mystery` is exactly the
+ * shape the game already plays, so approving one is a copy, not a conversion.
+ */
+export interface MysteryCandidate {
+  mystery: Mystery;
+  difficulty: Difficulty;
+  issues: ValidationIssue[];
+  evaluation: MysteryEvaluation | null;
+  status: CandidateStatus;
+}
+
+export interface GenerationRequest {
+  categories: string[];
+  difficulty: Difficulty;
+  count: number;
+}
 
 export function typeLabel(type: string): { label: string; emoji: string } {
   return MYSTERY_TYPE_LABELS[type] ?? { label: type.replace(/_/g, ' '), emoji: '\u{1F50D}' };
