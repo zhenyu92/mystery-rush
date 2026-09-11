@@ -22,6 +22,8 @@ import {
   CLUE_DURATION_MS,
   EVENT_NAME_MAX,
   INTRO_DURATION_MS,
+  MAX_RESPONSE_MS,
+  RESPONSE_BUCKET_MS,
   NICKNAME_MAX,
   pointsForClue,
   type ClientMessage,
@@ -81,6 +83,8 @@ interface PlayerRecord {
   streak: number;
   bestStreak: number;
   lastRoundPoints: number;
+  /** Cumulative tiebreak time. See MAX_RESPONSE_MS. */
+  totalResponseMs: number;
   joinedAt: number;
 }
 
@@ -90,6 +94,13 @@ interface AnswerRecord {
   clueNumber: number;
   isCorrect: boolean;
   pointsAwarded: number;
+  /**
+   * Time from the start of clue 1 to this submission, on a virtual clock.
+   * Computed at submission because `clueStartedAt` moves with every clue -
+   * by the time the round ends, the reference point for a clue-1 answer is
+   * long gone.
+   */
+  responseMs: number;
 }
 
 interface RoundRecord {
@@ -153,7 +164,15 @@ export class EventRoom extends DurableObject<Env> {
       }>('state');
       if (stored) {
         this.meta = stored.meta;
-        this.players = stored.players ?? {};
+        // A room restored from a blob written before these fields existed has
+        // `undefined` for them, and `undefined + n` is NaN, which would poison
+        // the comparator silently. Default everything on the way in.
+        this.players = Object.fromEntries(
+          Object.entries(stored.players ?? {}).map(([id, p]) => [
+            id,
+            { ...p, totalResponseMs: p.totalResponseMs ?? 0, bestStreak: p.bestStreak ?? 0 },
+          ]),
+        );
         this.round = stored.round ?? null;
         this.lastResult = stored.lastResult ?? null;
         this.queue = stored.queue ?? [];
@@ -274,6 +293,7 @@ export class EventRoom extends DurableObject<Env> {
       streak: 0,
       bestStreak: 0,
       lastRoundPoints: 0,
+      totalResponseMs: 0,
       joinedAt: Date.now(),
     };
     this.players[player.id] = player;
@@ -454,10 +474,12 @@ export class EventRoom extends DurableObject<Env> {
     // Server-side clue number. The client never gets a say in what a guess is worth.
     const clueNumber = round.currentClue;
     const correct = isCorrectAnswer(mystery, option);
+    const submittedAt = Date.now();
     round.answers[player.id] = {
       selectedOption: option,
-      submittedAt: Date.now(),
+      submittedAt,
       clueNumber,
+      responseMs: computeResponseMs(round, clueNumber, submittedAt),
       isCorrect: correct,
       // Banked now, added to the visible score only when the round ends.
       pointsAwarded: correct ? pointsForClue(clueNumber) : 0,
@@ -705,6 +727,10 @@ export class EventRoom extends DurableObject<Env> {
       const answer = round.answers[player.id];
       player.mysteriesPlayed += 1;
 
+      // The tiebreak clock is banked here for the same reason points are:
+      // nothing about timing may reach a client mid-round.
+      player.totalResponseMs += answer?.isCorrect ? answer.responseMs : MAX_RESPONSE_MS;
+
       if (answer) {
         player.score += answer.pointsAwarded;
         player.lastRoundPoints = answer.pointsAwarded;
@@ -723,6 +749,7 @@ export class EventRoom extends DurableObject<Env> {
           clueNumber: answer.clueNumber,
           isCorrect: answer.isCorrect,
           pointsAwarded: answer.pointsAwarded,
+          responseMs: answer.responseMs,
         });
       } else {
         player.lastRoundPoints = 0;
@@ -788,6 +815,7 @@ export class EventRoom extends DurableObject<Env> {
       player.streak = 0;
       player.bestStreak = 0;
       player.lastRoundPoints = 0;
+      player.totalResponseMs = 0;
     }
     this.round = null;
     this.lastResult = null;
@@ -842,23 +870,45 @@ export class EventRoom extends DurableObject<Env> {
     return ids;
   }
 
+  /**
+   * Cumulative time to solve, with rounds the player was absent for charged
+   * at the full rate. Without that, joining late would be an advantage on the
+   * tiebreak: fewer rounds played means less accumulated time.
+   */
+  private tiebreakMs(p: PlayerRecord): number {
+    const missed = Math.max(0, (this.meta?.roundsPlayed ?? 0) - p.mysteriesPlayed);
+    return p.totalResponseMs + missed * MAX_RESPONSE_MS;
+  }
+
   private rankings(): LeaderboardEntry[] {
     const connected = this.connectedPlayerIds();
+
+    // Score first, then who got there faster. There is a prize on this, so
+    // the order has to be defensible out loud, not alphabetical by accident.
     const sorted = Object.values(this.players).sort(
       (a, b) =>
         b.score - a.score ||
+        this.tiebreakMs(a) - this.tiebreakMs(b) ||
         b.correctAnswers - a.correctAnswers ||
         a.nickname.localeCompare(b.nickname),
     );
 
+    // Who shares a score with somebody else, so the podium can say why it
+    // split them. Only meaningful above zero - in the lobby everyone is tied.
+    const scoreCounts = new Map<number, number>();
+    for (const p of sorted) scoreCounts.set(p.score, (scoreCounts.get(p.score) ?? 0) + 1);
+
     const entries: LeaderboardEntry[] = [];
-    let lastScore: number | null = null;
+    let lastKey: string | null = null;
     let lastRank = 0;
 
     sorted.forEach((player, index) => {
-      // Equal scores share a rank; the next distinct score skips ahead.
-      const rank = lastScore !== null && player.score === lastScore ? lastRank : index + 1;
-      lastScore = player.score;
+      // The rank must be keyed on everything the sort ordered by, minus the
+      // nickname. Keying it on score alone - as it used to be - displays rows
+      // in an order the rank numbers then contradict.
+      const key = `${player.score}|${this.tiebreakMs(player)}|${player.correctAnswers}`;
+      const rank = key === lastKey ? lastRank : index + 1;
+      lastKey = key;
       lastRank = rank;
 
       const previous = this.previousRanks[player.id];
@@ -869,6 +919,13 @@ export class EventRoom extends DurableObject<Env> {
         correctAnswers: player.correctAnswers,
         mysteriesPlayed: player.mysteriesPlayed,
         streak: player.streak,
+        bestStreak: player.bestStreak,
+        totalResponseMs: player.totalResponseMs,
+        avgResponseMs:
+          player.mysteriesPlayed > 0
+            ? Math.round(player.totalResponseMs / player.mysteriesPlayed)
+            : null,
+        tiedOnScore: player.score > 0 && (scoreCounts.get(player.score) ?? 0) > 1,
         rank,
         rankDelta: previous === undefined ? 0 : previous - rank,
         lastRoundPoints: player.lastRoundPoints,
@@ -1012,6 +1069,22 @@ export class EventRoom extends DurableObject<Env> {
   }
 }
 
+/**
+ * Time to solve, on a virtual clock that starts when clue 1 opens.
+ *
+ * Deliberately *not* time-within-the-current-clue, which is non-monotone:
+ * one second into clue 5 would look faster than nineteen seconds into clue 1,
+ * inverting the thing the scoring already rewards. Completed windows
+ * contribute their nominal duration, so a late alarm cannot inflate one
+ * player's number relative to another's, and because `resumeRound`
+ * back-dates `clueStartedAt`, a pause is excluded for free.
+ */
+function computeResponseMs(round: RoundRecord, clueNumber: number, submittedAt: number): number {
+  const raw = (clueNumber - 1) * CLUE_DURATION_MS + (submittedAt - round.clueStartedAt);
+  const clamped = Math.min(MAX_RESPONSE_MS, Math.max(0, raw));
+  return Math.round(clamped / RESPONSE_BUCKET_MS) * RESPONSE_BUCKET_MS;
+}
+
 function toArchivedPlayer(p: PlayerRecord): ArchivedPlayer {
   return {
     id: p.id,
@@ -1019,6 +1092,8 @@ function toArchivedPlayer(p: PlayerRecord): ArchivedPlayer {
     score: p.score,
     correctAnswers: p.correctAnswers,
     mysteriesPlayed: p.mysteriesPlayed,
+    bestStreak: p.bestStreak,
+    totalResponseMs: p.totalResponseMs,
     joinedAt: p.joinedAt,
   };
 }

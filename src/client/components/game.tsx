@@ -6,7 +6,7 @@ import {
   type LeaderboardEntry,
   type PublicRound,
 } from '../../shared/types';
-import { formatXp } from './common';
+import { formatSeconds, formatXp } from './common';
 
 /**
  * The clue stack. Earlier clues stay on screen so players can reason across
@@ -200,6 +200,9 @@ function LeaderboardRow({
         <div className="lb__meta">
           {entry.correctAnswers}/{entry.mysteriesPlayed} correct
           {entry.streak > 1 ? ` · \u{1F525} ${entry.streak}` : ''}
+          {/* Shown all night rather than sprung at the end, so the tiebreak
+              is never a surprise when it decides the prize. */}
+          {entry.avgResponseMs !== null ? ` · ⚡ ${formatSeconds(entry.avgResponseMs)}` : ''}
           {!entry.connected ? ' · offline' : ''}
         </div>
       </div>

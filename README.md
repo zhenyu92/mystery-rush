@@ -60,6 +60,41 @@ lied to:
 Clients measure their offset from the server clock with a ping/pong handshake and keep the sample
 from the fastest round trip, so a phone with a badly set clock still sees the right countdown.
 
+### Scoring, and how a tie is broken
+
+Points come from the clue number the server had open when the submission
+arrived: 500, 400, 300, 200, 100.
+
+Equal scores are separated by **total time to solve**, accumulated across the
+event. The clock is virtual and starts when clue 1 opens:
+
+```
+responseMs = (clueNumber - 1) x CLUE_DURATION_MS + (submittedAt - clueStartedAt)
+```
+
+Deliberately *not* time-within-the-current-clue, which is non-monotone: one
+second into clue 5 would beat nineteen seconds into clue 1, inverting what the
+scoring already rewards. Completed windows contribute their nominal length, so
+a late alarm cannot inflate one player's number against another's, and because
+`resumeRound` back-dates `clueStartedAt`, a pause is excluded for free.
+
+It is computed **at submission**, not at the end of the round - `clueStartedAt`
+moves with every clue, so by then the reference point for a clue-1 answer is
+gone. It is banked into the player's total only at round end, alongside the
+points, so no timing information reaches a client mid-round.
+
+A round the player did not solve - no answer, or a wrong one - costs
+`MAX_RESPONSE_MS`, exactly what a correct answer on the final millisecond of the
+last clue would cost. Never worse than any real answer, never better. Counting a
+fast wrong answer as fast would rank a confidently-wrong player above someone
+right on clue 3. Times are bucketed to 100ms so venue wifi cannot decide a prize,
+and players who joined late are charged for the rounds they missed, so arriving
+late is never an advantage.
+
+The rank number is keyed on the whole comparator, so the displayed order and the
+rank can never disagree. When the score alone did not decide first place, the
+podium says so: **"Won on speed - 6.1s avg vs 8.4s"**.
+
 ### Reconnection
 
 Player credentials live in `localStorage`. A phone that locks, drops signal or reloads mid-round

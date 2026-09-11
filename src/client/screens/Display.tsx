@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { CLUE_POINTS, typeLabel, type LeaderboardEntry } from '../../shared/types';
 import { useCountdown } from '../lib/useCountdown';
 import { useGameSocket } from '../lib/useGameSocket';
-import { Brand, ConnectionDot, TimerRing, formatXp, plural } from '../components/common';
+import { Brand, ConnectionDot, TimerRing, formatSeconds, formatXp, plural } from '../components/common';
 import { AnswerBars, Leaderboard, Podium } from '../components/game';
 import { Confetti } from '../components/Confetti';
 import { QrCode } from '../components/QrCode';
@@ -315,8 +315,20 @@ function FinalReveal({
           <div className="winner__label">{'\u{1F389}'} We have a winner</div>
           <div className="winner__name">{winner.nickname}</div>
           <div className="winner__score">{formatXp(winner.score)} XP</div>
-          <div className="pill pill--streak" style={{ fontSize: 15, marginTop: 10 }}>
-            {'\u{1F3C6}'} Mystery Master
+          <div className="row" style={{ justifyContent: 'center', marginTop: 10 }}>
+            <div className="pill pill--streak" style={{ fontSize: 15 }}>
+              {'\u{1F3C6}'} Mystery Master
+            </div>
+            {/* Say it out loud when the score alone did not decide it, rather
+                than letting the room wonder how the tie was broken. */}
+            {winner.tiedOnScore && winner.avgResponseMs !== null ? (
+              <div className="pill pill--xp" style={{ fontSize: 15 }}>
+                {'⚡'} Won on speed {'·'} {formatSeconds(winner.avgResponseMs)} avg
+                {entries[1]?.avgResponseMs != null
+                  ? ` vs ${formatSeconds(entries[1].avgResponseMs)}`
+                  : ''}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : (

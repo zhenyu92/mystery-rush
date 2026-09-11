@@ -134,6 +134,15 @@ export function formatXp(value: number): string {
   return value.toLocaleString('en-US');
 }
 
+/**
+ * Tiebreak times, as seconds to one decimal. Rounds a player never solved
+ * are charged the full round length, so a big number here means "often did
+ * not get there", which is exactly what it should mean.
+ */
+export function formatSeconds(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 /** "1 mystery" / "3 mysteries" - it shows up on every screen. */
 export function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : pluralForm}`;

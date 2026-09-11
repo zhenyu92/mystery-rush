@@ -10,6 +10,7 @@ import {
   CLUE_DURATION_MS,
   CLUE_POINTS,
   INTRO_DURATION_MS,
+  MAX_RESPONSE_MS,
 } from '../src/shared/types.ts';
 
 const HOST = process.argv[2] ?? '127.0.0.1:8787';
@@ -173,6 +174,20 @@ check(
 );
 check('scores now visible', pa.last?.self.score === CLUE_POINTS[0]);
 
+// Alice and Cara both answered correctly on clue 1, so the score alone cannot
+// separate them. With a prize on the line the order has to be defensible.
+console.log('  -- tiebreak --');
+check('equal scores get distinct ranks', lb1.Alice.rank === 1 && lb1.Cara.rank === 2,
+  `Alice #${lb1.Alice.rank}, Cara #${lb1.Cara.rank}`);
+check('the faster of the two is ahead', lb1.Alice.totalResponseMs < lb1.Cara.totalResponseMs,
+  `${lb1.Alice.totalResponseMs} vs ${lb1.Cara.totalResponseMs}`);
+check('the tie is flagged so the podium can explain it',
+  lb1.Alice.tiedOnScore === true && lb1.Cara.tiedOnScore === true);
+check('a wrong answer is charged a full round', lb1.Bob.totalResponseMs === MAX_RESPONSE_MS,
+  `got ${lb1.Bob.totalResponseMs}`);
+check('Bob is not flagged as tied (he is alone on zero)', lb1.Bob.tiedOnScore === false);
+check('average response time is reported', lb1.Alice.avgResponseMs === lb1.Alice.totalResponseMs);
+
 // ---------------------------------------------------------------- round 2
 console.log('\n=== 7. A disconnect can also complete the room ===');
 send(host, { type: 'host', action: 'next_round' });
@@ -284,6 +299,8 @@ send(host, { type: 'host', action: 'reset_event' });
 await waitFor(pb, (s) => s.phase === 'lobby', 4000, 'reset');
 check('reset returns to lobby', pb.last?.snapshot.phase === 'lobby');
 check('reset zeroes every score', pb.last.snapshot.leaderboard.every((e) => e.score === 0));
+check('reset zeroes the tiebreak clock',
+  pb.last.snapshot.leaderboard.every((e) => e.totalResponseMs === 0 && e.avgResponseMs === null));
 check('reset keeps the players', pb.last.snapshot.players.length === 4);
 check('reset restores the question bank', pb.last.snapshot.mysteriesRemaining === pb.last.snapshot.totalMysteries);
 

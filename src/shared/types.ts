@@ -20,6 +20,20 @@ export const CLUE_DURATION_MS = 20_000;
  */
 export const INTRO_DURATION_MS = 10_000;
 
+/**
+ * What a round costs a player who never solved it, on the response-time
+ * tiebreak. Deliberately equal to a correct answer on the final millisecond
+ * of the last clue: never worse than any real answer, never better.
+ */
+export const MAX_RESPONSE_MS = CLUE_COUNT * CLUE_DURATION_MS;
+
+/**
+ * Response times are rounded to this before being banked. The timestamp is
+ * server-receive time, so it carries venue-wifi latency; rounding off the
+ * last tenth of a second stops one network hiccup from deciding a prize.
+ */
+export const RESPONSE_BUCKET_MS = 100;
+
 /** Points for a correct answer, indexed by clue number (1-based). */
 export const CLUE_POINTS: readonly number[] = [500, 400, 300, 200, 100];
 
@@ -121,6 +135,17 @@ export interface LeaderboardEntry {
   correctAnswers: number;
   mysteriesPlayed: number;
   streak: number;
+  bestStreak: number;
+  /**
+   * Cumulative time to solve, used to break score ties. Rounds the player
+   * did not solve are charged MAX_RESPONSE_MS, so this is "total time to find
+   * the answer, with a full round charged for a round you never found it".
+   */
+  totalResponseMs: number;
+  /** Per round played. Null until they have played one. */
+  avgResponseMs: number | null;
+  /** Another player holds this exact score. Only ever true above zero. */
+  tiedOnScore: boolean;
   rank: number;
   /** Rank change since the previous round: positive means moved up. */
   rankDelta: number;

@@ -5,6 +5,10 @@
 -- record that outlives the room: the event registry that maps a code to a
 -- room, plus an archive of players, rounds and answers for post-event
 -- reporting. Gameplay never blocks on a D1 write.
+--
+-- NOTE: every statement here is CREATE TABLE IF NOT EXISTS, so re-running it
+-- will NOT add columns to a database that already exists. A schema change
+-- needs a matching file in migrations/ too.
 
 CREATE TABLE IF NOT EXISTS events (
   event_code      TEXT PRIMARY KEY,
@@ -24,6 +28,10 @@ CREATE TABLE IF NOT EXISTS players (
   score            INTEGER NOT NULL DEFAULT 0,
   correct_answers  INTEGER NOT NULL DEFAULT 0,
   mysteries_played INTEGER NOT NULL DEFAULT 0,
+  best_streak      INTEGER NOT NULL DEFAULT 0,
+  -- Cumulative time to solve, the score tiebreak. Rounds the player never
+  -- solved are charged the full round length.
+  total_response_ms INTEGER NOT NULL DEFAULT 0,
   joined_at        INTEGER NOT NULL,
   FOREIGN KEY (event_code) REFERENCES events (event_code) ON DELETE CASCADE
 );
@@ -52,6 +60,7 @@ CREATE TABLE IF NOT EXISTS answers (
   clue_number     INTEGER NOT NULL,
   is_correct      INTEGER NOT NULL,
   points_awarded  INTEGER NOT NULL,
+  response_ms     INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (round_id, player_id)
 );
 

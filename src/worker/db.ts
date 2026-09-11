@@ -19,6 +19,8 @@ export interface ArchivedPlayer {
   score: number;
   correctAnswers: number;
   mysteriesPlayed: number;
+  bestStreak: number;
+  totalResponseMs: number;
   joinedAt: number;
 }
 
@@ -30,6 +32,7 @@ export interface ArchivedAnswer {
   clueNumber: number;
   isCorrect: boolean;
   pointsAwarded: number;
+  responseMs: number;
 }
 
 async function quiet(label: string, work: Promise<unknown>): Promise<void> {
@@ -88,15 +91,28 @@ export async function upsertPlayer(db: D1Database, eventCode: string, p: Archive
     'upsertPlayer',
     db
       .prepare(
-        `INSERT INTO players (id, event_code, nickname, score, correct_answers, mysteries_played, joined_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO players
+           (id, event_code, nickname, score, correct_answers, mysteries_played, best_streak, total_response_ms, joined_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            nickname = excluded.nickname,
            score = excluded.score,
            correct_answers = excluded.correct_answers,
-           mysteries_played = excluded.mysteries_played`,
+           mysteries_played = excluded.mysteries_played,
+           best_streak = excluded.best_streak,
+           total_response_ms = excluded.total_response_ms`,
       )
-      .bind(p.id, eventCode, p.nickname, p.score, p.correctAnswers, p.mysteriesPlayed, p.joinedAt)
+      .bind(
+        p.id,
+        eventCode,
+        p.nickname,
+        p.score,
+        p.correctAnswers,
+        p.mysteriesPlayed,
+        p.bestStreak,
+        p.totalResponseMs,
+        p.joinedAt,
+      )
       .run(),
   );
 }
@@ -138,8 +154,8 @@ export async function recordRoundEnd(
 
   const answerStmt = db.prepare(
     `INSERT INTO answers
-       (round_id, player_id, event_code, selected_option, submitted_at, clue_number, is_correct, points_awarded)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       (round_id, player_id, event_code, selected_option, submitted_at, clue_number, is_correct, points_awarded, response_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (round_id, player_id) DO NOTHING`,
   );
   for (const a of answers) {
@@ -153,22 +169,36 @@ export async function recordRoundEnd(
         a.clueNumber,
         a.isCorrect ? 1 : 0,
         a.pointsAwarded,
+        a.responseMs,
       ),
     );
   }
 
   const playerStmt = db.prepare(
-    `INSERT INTO players (id, event_code, nickname, score, correct_answers, mysteries_played, joined_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO players
+       (id, event_code, nickname, score, correct_answers, mysteries_played, best_streak, total_response_ms, joined_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (id) DO UPDATE SET
        nickname = excluded.nickname,
        score = excluded.score,
        correct_answers = excluded.correct_answers,
-       mysteries_played = excluded.mysteries_played`,
+       mysteries_played = excluded.mysteries_played,
+       best_streak = excluded.best_streak,
+       total_response_ms = excluded.total_response_ms`,
   );
   for (const p of players) {
     statements.push(
-      playerStmt.bind(p.id, eventCode, p.nickname, p.score, p.correctAnswers, p.mysteriesPlayed, p.joinedAt),
+      playerStmt.bind(
+        p.id,
+        eventCode,
+        p.nickname,
+        p.score,
+        p.correctAnswers,
+        p.mysteriesPlayed,
+        p.bestStreak,
+        p.totalResponseMs,
+        p.joinedAt,
+      ),
     );
   }
 
@@ -184,7 +214,10 @@ export async function resetEventRows(db: D1Database, eventCode: string): Promise
       db.prepare('DELETE FROM rounds WHERE event_code = ?').bind(eventCode),
       db
         .prepare(
-          `UPDATE players SET score = 0, correct_answers = 0, mysteries_played = 0 WHERE event_code = ?`,
+          `UPDATE players
+             SET score = 0, correct_answers = 0, mysteries_played = 0,
+                 best_streak = 0, total_response_ms = 0
+           WHERE event_code = ?`,
         )
         .bind(eventCode),
       db.prepare(`UPDATE events SET phase = 'lobby', updated_at = ? WHERE event_code = ?`).bind(Date.now(), eventCode),
