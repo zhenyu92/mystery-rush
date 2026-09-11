@@ -27,17 +27,23 @@ export function AiGenerator({
   hostToken: string;
   onApproved: (mystery: Mystery) => void;
 }) {
-  const [category, setCategory] = useState<string>('landmark');
+  const [categories, setCategories] = useState<string[]>(['landmark']);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
+  const [count, setCount] = useState(5);
   const [phase, setPhase] = useState<'idle' | 'generating' | 'evaluating'>('idle');
   const [pool, setPool] = useState<PoolResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<MysteryCandidate | null>(null);
   const [approving, setApproving] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState<string | null>(null);
   const [approved, setApproved] = useState<Set<string>>(new Set());
   const [rejected, setRejected] = useState<Set<string>>(new Set());
 
   const busy = phase !== 'idle';
+
+  const toggleCategory = (type: string) => {
+    setCategories((prev) => (prev.includes(type) ? prev.filter((c) => c !== type) : [...prev, type]));
+  };
 
   const generate = async () => {
     setError(null);
@@ -49,9 +55,9 @@ export function AiGenerator({
     try {
       const result = await api.generateMysteries(code, {
         hostToken,
-        categories: [category],
+        categories,
         difficulty,
-        count: 1,
+        count,
       });
       setPool(result);
       if (result.error && result.candidates.length === 0) setError(result.error);
@@ -63,6 +69,42 @@ export function AiGenerator({
     } finally {
       clearTimeout(evaluating);
       setPhase('idle');
+    }
+  };
+
+  /**
+   * Replace one card. Asks for a single mystery in that card's own category,
+   * so regenerating a weak food mystery does not hand back a landmark.
+   */
+  const regenerate = async (candidate: MysteryCandidate) => {
+    setRegenerating(candidate.mystery.id);
+    setError(null);
+    try {
+      const result = await api.generateMysteries(code, {
+        hostToken,
+        categories: [candidate.mystery.type],
+        difficulty: candidate.difficulty,
+        count: 1,
+      });
+      const replacement = result.candidates[0];
+      if (!replacement) {
+        setError(result.error ?? 'Nothing usable came back. Try again.');
+        return;
+      }
+      setPool((prev) =>
+        prev
+          ? {
+              ...prev,
+              candidates: prev.candidates.map((c) =>
+                c.mystery.id === candidate.mystery.id ? replacement : c,
+              ),
+            }
+          : prev,
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'AI generation is temporarily unavailable.');
+    } finally {
+      setRegenerating(null);
     }
   };
 
@@ -93,22 +135,29 @@ export function AiGenerator({
       </div>
 
       <div className="field">
-        <label className="field__label" htmlFor="ai-category">
-          Category
-        </label>
-        <select
-          id="ai-category"
-          className="select"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          disabled={busy}
-        >
+        <span className="field__label">Categories</span>
+        <div className="catgrid">
           {MYSTERY_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {typeLabel(t).emoji} {typeLabel(t).label}
-            </option>
+            <label key={t} className={`catchip${categories.includes(t) ? ' catchip--on' : ''}`}>
+              <input
+                type="checkbox"
+                checked={categories.includes(t)}
+                onChange={() => toggleCategory(t)}
+                disabled={busy}
+              />
+              <span>
+                {typeLabel(t).emoji} {typeLabel(t).label}
+              </span>
+            </label>
           ))}
-        </select>
+        </div>
+        <span className="tiny dim">
+          {categories.length === 0
+            ? 'Pick at least one.'
+            : categories.length === 1
+              ? 'The pool will only use this category.'
+              : `The pool will be spread across these ${categories.length} categories.`}
+        </span>
       </div>
 
       <div className="field">
@@ -130,12 +179,35 @@ export function AiGenerator({
         </select>
       </div>
 
-      <button className="btn btn--cyan btn--block" onClick={generate} disabled={busy}>
+      <div className="field">
+        <label className="field__label" htmlFor="ai-count">
+          How many
+        </label>
+        <select
+          id="ai-count"
+          className="select"
+          value={count}
+          onChange={(e) => setCount(Number(e.target.value))}
+          disabled={busy}
+        >
+          {[1, 3, 5, 8, 10].map((n) => (
+            <option key={n} value={n}>
+              {n} {n === 1 ? 'mystery' : 'mysteries'}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <button
+        className="btn btn--cyan btn--block"
+        onClick={generate}
+        disabled={busy || categories.length === 0}
+      >
         {phase === 'generating'
           ? 'Generating...'
           : phase === 'evaluating'
             ? 'Evaluating...'
-            : '✨ Generate a mystery'}
+            : `✨ Generate ${count === 1 ? 'a mystery' : count + ' mysteries'}`}
       </button>
 
       {busy ? <div className="scanline" /> : null}
@@ -156,8 +228,10 @@ export function AiGenerator({
           approved={approved.has(c.mystery.id)}
           rejected={rejected.has(c.mystery.id)}
           approving={approving === c.mystery.id}
+          regenerating={regenerating === c.mystery.id}
           onPreview={() => setPreview(c)}
           onApprove={() => approve(c)}
+          onRegenerate={() => regenerate(c)}
           onReject={() => setRejected((prev) => new Set(prev).add(c.mystery.id))}
         />
       ))}
@@ -204,16 +278,20 @@ function CandidateCard({
   approved,
   rejected,
   approving,
+  regenerating,
   onPreview,
   onApprove,
+  onRegenerate,
   onReject,
 }: {
   candidate: MysteryCandidate;
   approved: boolean;
   rejected: boolean;
   approving: boolean;
+  regenerating: boolean;
   onPreview: () => void;
   onApprove: () => void;
+  onRegenerate: () => void;
   onReject: () => void;
 }) {
   const { mystery, evaluation, issues } = candidate;
@@ -273,6 +351,9 @@ function CandidateCard({
           </button>
           <button className="btn btn--go btn--sm" onClick={onApprove} disabled={approving}>
             {approving ? 'Adding...' : 'Add to game'}
+          </button>
+          <button className="btn btn--ghost btn--sm" onClick={onRegenerate} disabled={regenerating}>
+            {regenerating ? 'Regenerating...' : 'Regenerate'}
           </button>
           <button className="btn btn--ghost btn--sm" onClick={onReject}>
             Reject
