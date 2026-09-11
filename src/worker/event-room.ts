@@ -34,6 +34,7 @@ import {
   type EventPhase,
   type LeaderboardEntry,
   type LobbyPlayer,
+  type Mystery,
   type MysteryChoice,
   type PlayerRoundResult,
   type PlayerSelf,
@@ -177,6 +178,13 @@ export class EventRoom extends DurableObject<Env> {
   /** Ranks going into the current round, used for the leaderboard arrows. */
   private previousRanks: Record<string, number> = {};
   private scheduled: Scheduled | null = null;
+  /**
+   * Mysteries the host generated and approved for this event, keyed by id.
+   * Held here rather than in D1 because the round loop resolves a mystery
+   * synchronously on the hot path; this is already persisted and survives
+   * hibernation, so an approved mystery cannot vanish mid-round.
+   */
+  private library: Record<string, Mystery> = {};
 
   private readonly rate = new WeakMap<WebSocket, { count: number; windowStart: number }>();
 
@@ -191,6 +199,7 @@ export class EventRoom extends DurableObject<Env> {
         queue: string[];
         previousRanks: Record<string, number>;
         scheduled: Scheduled | null;
+        library: Record<string, Mystery>;
       }>('state');
       if (stored) {
         this.meta = {
@@ -213,8 +222,23 @@ export class EventRoom extends DurableObject<Env> {
         this.queue = stored.queue ?? [];
         this.previousRanks = stored.previousRanks ?? {};
         this.scheduled = stored.scheduled ?? null;
+        this.library = stored.library ?? {};
       }
     });
+  }
+
+  /**
+   * A mystery by id, approved-for-this-event first, then the built-in bank.
+   * Every round-time lookup goes through here so an AI mystery behaves
+   * exactly like a hand-written one once the host has approved it.
+   */
+  private resolveMystery(id: string): Mystery | undefined {
+    return this.library[id] ?? getMystery(id);
+  }
+
+  /** Built-in bank plus whatever this host approved. */
+  private allMysteries(): Mystery[] {
+    return [...MYSTERIES, ...Object.values(this.library)];
   }
 
   private async persist(): Promise<void> {
@@ -227,6 +251,7 @@ export class EventRoom extends DurableObject<Env> {
       queue: this.queue,
       previousRanks: this.previousRanks,
       scheduled: this.scheduled,
+      library: this.library,
     });
   }
 
@@ -271,6 +296,10 @@ export class EventRoom extends DurableObject<Env> {
         return json({ exists: this.meta !== null, eventName: this.meta?.eventName ?? null });
       case '/join':
         return this.handleJoin(request);
+      case '/verify-host':
+        return this.handleVerifyHost(request);
+      case '/library':
+        return this.handleLibraryAdd(request);
       case '/ws':
         return this.handleWebSocketUpgrade(request, url);
       default:
@@ -304,7 +333,7 @@ export class EventRoom extends DurableObject<Env> {
           ? Math.min(Math.floor(body.plannedRounds), MYSTERIES.length)
           : null,
     };
-    this.queue = shuffle(MYSTERIES.map((m) => m.id));
+    this.queue = shuffle(this.allMysteries().map((m) => m.id));
     await this.persist();
 
     this.ctx.waitUntil(
@@ -389,6 +418,78 @@ export class EventRoom extends DurableObject<Env> {
       eventCode: this.meta.eventCode,
       resumed: false,
     });
+  }
+
+  /**
+   * Confirm a host token without opening a socket.
+   *
+   * The Worker needs this before it spends a model call on someone's behalf,
+   * and it must stay cheap: the AI request itself runs in the Worker, not
+   * here, so that a thirty-second generation cannot occupy this object's
+   * input gate while a round is running.
+   */
+  private async handleVerifyHost(request: Request): Promise<Response> {
+    if (!this.meta) return json({ error: 'no_such_event' }, 404);
+    const body = (await request.json()) as { hostToken?: string };
+    const ok = safeEqual(this.meta.hostTokenHash, await hashToken(body.hostToken ?? ''));
+    if (!ok) return json({ error: 'unauthorised' }, 403);
+    return json({
+      ok: true,
+      eventName: this.meta.eventName,
+      // So the generator can avoid answers the room will already have seen.
+      existingAnswers: this.allMysteries().map((m) => m.answer),
+    });
+  }
+
+  /**
+   * Take a host-approved mystery into this event's library.
+   *
+   * Validation happened in the Worker before this point, but this is the
+   * boundary where content becomes playable, so the shape is checked again
+   * here rather than trusted across the hop.
+   */
+  private async handleLibraryAdd(request: Request): Promise<Response> {
+    if (!this.meta) return json({ error: 'no_such_event' }, 404);
+    const body = (await request.json()) as { hostToken?: string; mystery?: Mystery };
+    if (!safeEqual(this.meta.hostTokenHash, await hashToken(body.hostToken ?? ''))) {
+      return json({ error: 'unauthorised' }, 403);
+    }
+
+    const m = body.mystery;
+    const shapeOk =
+      m !== undefined &&
+      typeof m.id === 'string' &&
+      typeof m.type === 'string' &&
+      typeof m.title === 'string' &&
+      typeof m.answer === 'string' &&
+      Array.isArray(m.options) &&
+      m.options.length >= 2 &&
+      m.options.includes(m.answer) &&
+      Array.isArray(m.clues) &&
+      m.clues.length === CLUE_COUNT &&
+      m.clues.every((c) => typeof c === 'string' && c.length > 0);
+    if (!shapeOk) return json({ error: 'bad_mystery' }, 400);
+
+    if (Object.keys(this.library).length >= 60) {
+      return json({ error: 'library_full', message: 'This event already has plenty of mysteries.' }, 409);
+    }
+
+    const wasNew = !this.library[m.id];
+    this.library[m.id] = {
+      id: m.id,
+      type: m.type,
+      title: m.title,
+      answer: m.answer,
+      options: m.options,
+      clues: m.clues,
+    };
+    // Make it drawable straight away, without disturbing what is queued.
+    if (wasNew && !this.queue.includes(m.id)) this.queue.push(m.id);
+
+    await this.persist();
+    this.broadcastCatalog();
+    this.broadcast();
+    return json({ ok: true, librarySize: Object.keys(this.library).length });
   }
 
   private async handleWebSocketUpgrade(request: Request, url: URL): Promise<Response> {
@@ -544,7 +645,7 @@ export class EventRoom extends DurableObject<Env> {
       return;
     }
 
-    const mystery = getMystery(round.mysteryId);
+    const mystery = this.resolveMystery(round.mysteryId);
     if (!mystery) {
       send(ws, { type: 'error', code: 'bad_round', message: 'This mystery is unavailable.' });
       return;
@@ -698,7 +799,7 @@ export class EventRoom extends DurableObject<Env> {
 
     let mysteryId = requestedMysteryId;
     if (mysteryId) {
-      if (!getMystery(mysteryId)) {
+      if (!this.resolveMystery(mysteryId)) {
         sendMaybe(ws, { type: 'error', code: 'no_such_mystery', message: 'That mystery does not exist.' });
         return;
       }
@@ -715,7 +816,7 @@ export class EventRoom extends DurableObject<Env> {
       }
     }
 
-    const mystery = getMystery(mysteryId)!;
+    const mystery = this.resolveMystery(mysteryId)!;
     const now = Date.now();
 
     // A planned final mystery arms itself, so the host cannot forget the one
@@ -875,7 +976,7 @@ export class EventRoom extends DurableObject<Env> {
     const round = this.round;
     if (!round || !this.meta || round.status === 'ended') return;
 
-    const mystery = getMystery(round.mysteryId);
+    const mystery = this.resolveMystery(round.mysteryId);
     round.status = 'ended';
 
     const perPlayer: PlayerRoundResult[] = [];
@@ -998,7 +1099,7 @@ export class EventRoom extends DurableObject<Env> {
     this.meta.roundsPlayed = 0;
     this.meta.doublePending = false;
     this.meta.phase = 'lobby';
-    this.queue = shuffle(MYSTERIES.map((m) => m.id));
+    this.queue = shuffle(this.allMysteries().map((m) => m.id));
 
     await this.cancelSchedule();
     this.ctx.waitUntil(resetEventRows(this.env.DB, this.meta.eventCode));
@@ -1142,7 +1243,7 @@ export class EventRoom extends DurableObject<Env> {
   private publicRound(): PublicRound | null {
     const round = this.round;
     if (!round || !this.meta || this.meta.phase !== 'round') return null;
-    const mystery = getMystery(round.mysteryId);
+    const mystery = this.resolveMystery(round.mysteryId);
     if (!mystery) return null;
 
     const remainingMs =
@@ -1199,7 +1300,7 @@ export class EventRoom extends DurableObject<Env> {
       leaderboard: this.rankings(),
       roundsPlayed: meta.roundsPlayed,
       mysteriesRemaining: this.queue.length,
-      totalMysteries: MYSTERIES.length,
+      totalMysteries: this.allMysteries().length,
       nextRoundMultiplier: this.nextRoundMultiplier(),
       plannedRounds: meta.plannedRounds,
       autoAdvance: this.publicAutoAdvance(),
@@ -1228,11 +1329,12 @@ export class EventRoom extends DurableObject<Env> {
 
   private catalog(): MysteryChoice[] {
     const remaining = new Set(this.queue);
-    return MYSTERIES.map((m) => ({
+    return this.allMysteries().map((m) => ({
       id: m.id,
       type: m.type,
       title: m.title,
       used: !remaining.has(m.id),
+      source: this.library[m.id] ? 'ai' : 'builtin',
     }));
   }
 
@@ -1254,7 +1356,7 @@ export class EventRoom extends DurableObject<Env> {
   private hostBrief(): Extract<ServerMessage, { type: 'host_brief' }> | null {
     const round = this.round;
     if (!round || this.meta?.phase !== 'round') return null;
-    const mystery = getMystery(round.mysteryId);
+    const mystery = this.resolveMystery(round.mysteryId);
     if (!mystery) return null;
     return { type: 'host_brief', roundId: round.roundId, answer: mystery.answer, clues: mystery.clues };
   }

@@ -15,6 +15,12 @@
     "run_worker_first": ["/api/*", "/ws"]
   },
 
+  // Workers AI, for generating and evaluating mysteries in the host's prep
+  // workflow. It is never on the path of a live round - see src/worker/llm.ts.
+  // `remote` is explicit because AI bindings always reach real inference,
+  // even under `wrangler dev` - there is no local emulation to fall back to.
+  "ai": { "binding": "AI", "remote": true },
+
   "durable_objects": {
     "bindings": [
       { "name": "EVENT_ROOM", "class_name": "EventRoom" }

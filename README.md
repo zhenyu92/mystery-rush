@@ -36,7 +36,8 @@ the clock expire.
 | **Cloudflare Worker** (`src/worker/index.ts`) | Serves the SPA, exposes a small JSON API, and routes WebSockets to the right room. Holds no game state. |
 | **`EventRoom` Durable Object** (`src/worker/event-room.ts`) | One per event code. The single authority for the clock, the clues, the answer and the scoring. |
 | **D1** (`schema.sql`) | The event registry plus an archive of players, rounds and answers for after the party. |
-| **`data/mysteries.json`** | The question bank. 25 mysteries across 14 categories. Game logic never hard-codes a question. |
+| **`data/mysteries.json`** | The built-in question bank. 25 mysteries across 14 categories. Game logic never hard-codes a question. |
+| **Workers AI** (`src/worker/llm.ts`) | Writes candidate mysteries and grades them. Host-side preparation only — never on the path of a live round. |
 
 ### Why the Durable Object owns the clock
 
@@ -249,6 +250,63 @@ why the script passes `--experimental-strip-types`.
 
 [`test/screens.mjs`](test/screens.mjs) drives the same game through a real browser and screenshots
 every screen into `test/screens/`. Some of this UI is only wrong in ways you have to look at.
+
+---
+
+## AI Mystery Master
+
+Writing ten mysteries by hand takes an organiser about half an hour. The host console can generate
+a pool instead, in one or more categories, and then makes them earn their place.
+
+```
+host picks categories, difficulty, how many
+        |
+   Worker  ->  Workers AI          generation, in the Worker and never in the
+        |                          Durable Object: object requests are
+        |                          serialised, so a 30s call there would stall
+        |                          a live round
+        v
+   deterministic validation        everything a rule can decide
+        |                          category, exactly five clues, answer among
+        |                          unique options, no clue naming the answer
+        |                          before the last, length bounds, no markup,
+        v                          no repeated answers
+   AI evaluation                   only what survived, and only the things
+        |                          rules cannot judge: is the progression
+        |                          real, could another option be right
+        v
+   the host reads it and approves  nothing is playable before this
+        |
+        v
+   the existing game engine
+```
+
+The order is the point. Anything a rule can settle is settled by a rule, because the alternative is
+asking the same kind of system that produced the content whether the content is good. The model
+only gets asked about the parts that need judgement.
+
+**The AI never touches the running game.** The clock, clue progression, one-guess enforcement,
+scoring, the leaderboard and the hidden answer all stay exactly where they were. If Workers AI is
+unavailable the host loses the generator and nothing else — the 25 built-in mysteries and any
+running event are untouched.
+
+Approved mysteries live in the event's own library in Durable Object storage, not D1: the round
+loop resolves a mystery synchronously, so it has to survive hibernation without a round trip.
+`resolveMystery` checks that library and falls back to the built-in bank, so a hand-written mystery
+behaves exactly as it always did.
+
+Everything provider-specific is in [`src/worker/llm.ts`](src/worker/llm.ts) — model, prompts,
+schemas, parsing, timeouts. The rest of the app calls `generateMysteries` and `evaluateMystery` and
+does not know Cloudflare is involved.
+
+The prompt in production was chosen by measurement, not taste — see
+[`docs/mystery-evaluation.md`](docs/mystery-evaluation.md).
+
+### Cost and local development
+
+Workers AI has no local emulation: the binding is marked `remote` and reaches real inference even
+under `wrangler dev`, so generating while developing bills your account. The unit suite mocks the
+binding and never spends a neuron; `npm run eval:prompts` deliberately does.
 
 ---
 

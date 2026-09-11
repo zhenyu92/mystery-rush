@@ -11,6 +11,12 @@ export interface Env {
   DB: D1Database;
   EVENT_ROOM: DurableObjectNamespace;
   ASSETS: Fetcher;
+  /**
+   * Workers AI. Used only by the host's mystery-preparation workflow; no
+   * live-round code path touches it. Optional so a deployment without the
+   * binding still runs the game - see requireAi() in llm.ts.
+   */
+  AI?: Ai;
 }
 
 export interface ArchivedPlayer {

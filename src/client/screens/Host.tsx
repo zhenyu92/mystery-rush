@@ -14,6 +14,7 @@ import { useGameSocket } from '../lib/useGameSocket';
 import { Brand, ConnectionDot, Modal, TimerRing, Toast, formatXp, plural } from '../components/common';
 import { AnswerBars, ClueList, CluePips, Leaderboard, Podium } from '../components/game';
 import { Confetti } from '../components/Confetti';
+import { AiGenerator } from '../components/AiGenerator';
 import { QrCode } from '../components/QrCode';
 
 export function Host({
@@ -213,6 +214,10 @@ function HostConsole({
   const round = snapshot?.round ?? null;
   const countdown = useCountdown(round, clockOffset);
   const [selectedMystery, setSelectedMystery] = useState<string>('');
+  // Narrows the picker only. An empty filter means everything, which is the
+  // behaviour the picker had before.
+  const [pickerFilter, setPickerFilter] = useState<string[]>([]);
+  const [pickerSource, setPickerSource] = useState<'all' | 'builtin' | 'ai'>('all');
   // A union rather than a parallel `kickTarget` state: it makes the three
   // dialogs mutually exclusive by construction.
   const [confirm, setConfirm] = useState<Confirm | null>(null);
@@ -255,6 +260,16 @@ function HostConsole({
   const answered = round?.answeredCount ?? 0;
   const total = round?.playerCount ?? snapshot?.players.length ?? 0;
   const liveBrief = hostBrief && round && hostBrief.roundId === round.roundId ? hostBrief : null;
+
+  const builtinCount = catalog.filter((m) => m.source !== 'ai').length;
+  const aiCount = catalog.filter((m) => m.source === 'ai').length;
+  const catalogTypes = [...new Set(catalog.map((m) => m.type))].sort();
+  const visibleCatalog = catalog.filter(
+    (m) =>
+      (pickerSource === 'all' ||
+        (pickerSource === 'ai' ? m.source === 'ai' : m.source !== 'ai')) &&
+      (pickerFilter.length === 0 || pickerFilter.includes(m.type)),
+  );
   const doubleArmed = (snapshot?.nextRoundMultiplier ?? 1) > 1;
   const autoSeconds = useDeadline(snapshot?.autoAdvance?.at ?? null, clockOffset);
   const isFinalPlanned =
@@ -557,13 +572,66 @@ function HostConsole({
           </div>
 
           {phase !== 'round' ? (
+            <AiGenerator
+              code={code}
+              hostToken={hostToken}
+              onApproved={() => {
+                /* The room re-broadcasts its catalog, so the picker updates itself. */
+              }}
+            />
+          ) : null}
+
+          {phase !== 'round' ? (
             <div className="card stack">
               <div className="card__title">Pick the next mystery</div>
               <p className="tiny dim" style={{ margin: 0 }}>
                 Leave unselected to draw the next one at random.
               </p>
+
+              <div className="row" style={{ gap: 6 }}>
+                {(['all', 'builtin', 'ai'] as const).map((sourceOption) => (
+                  <button
+                    key={sourceOption}
+                    className={`btn btn--sm ${pickerSource === sourceOption ? 'btn--cyan' : 'btn--ghost'}`}
+                    onClick={() => setPickerSource(sourceOption)}
+                  >
+                    {sourceOption === 'all'
+                      ? `All ${catalog.length}`
+                      : sourceOption === 'builtin'
+                        ? `Built-in ${builtinCount}`
+                        : `✨ AI ${aiCount}`}
+                  </button>
+                ))}
+              </div>
+
+              {catalogTypes.length > 1 ? (
+                <div className="catgrid">
+                  {catalogTypes.map((t) => (
+                    <label key={t} className={`catchip${pickerFilter.includes(t) ? ' catchip--on' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={pickerFilter.includes(t)}
+                        onChange={() =>
+                          setPickerFilter((prev) =>
+                            prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+                          )
+                        }
+                      />
+                      <span>
+                        {typeLabel(t).emoji} {typeLabel(t).label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              ) : null}
+
               <div className="picker">
-                {catalog.map((m) => (
+                {visibleCatalog.length === 0 ? (
+                  <p className="tiny dim" style={{ margin: 0 }}>
+                    Nothing matches that filter.
+                  </p>
+                ) : null}
+                {visibleCatalog.map((m) => (
                   <button
                     className={`picker__item${selectedMystery === m.id ? ' picker__item--selected' : ''}`}
                     key={m.id}
@@ -573,7 +641,10 @@ function HostConsole({
                     <span>{typeLabel(m.type).emoji}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ display: 'block' }}>{m.title}</span>
-                      <span className="picker__type">{typeLabel(m.type).label}</span>
+                      <span className="picker__type">
+                        {typeLabel(m.type).label}
+                        {m.source === 'ai' ? ' · ✨ AI' : ''}
+                      </span>
                     </span>
                     {m.used ? <span className="tiny dim">played</span> : null}
                   </button>
