@@ -134,6 +134,34 @@ export function AnswerBars({
   );
 }
 
+/** Two-way switch for the post-round view. */
+export function SegmentedTabs<T extends string>({
+  tabs,
+  value,
+  onChange,
+}: {
+  tabs: Array<{ id: T; label: string; badge?: string }>;
+  value: T;
+  onChange: (id: T) => void;
+}) {
+  return (
+    <div className="segbar" role="tablist">
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          role="tab"
+          aria-selected={t.id === value}
+          className={`segbar__tab${t.id === value ? ' segbar__tab--on' : ''}`}
+          onClick={() => onChange(t.id)}
+        >
+          {t.label}
+          {t.badge ? <span className="segbar__badge">{t.badge}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Leaderboard({
   entries,
   meId,

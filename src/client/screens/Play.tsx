@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CLUE_POINTS, typeLabel } from '../../shared/types';
 import { session } from '../lib/session';
-import { useCountdown } from '../lib/useCountdown';
+import { useCountdown, useDeadline } from '../lib/useCountdown';
 import { useGameSocket } from '../lib/useGameSocket';
 import { Brand, ConnectionDot, TimerRing, Toast, formatXp, plural } from '../components/common';
-import { AnswerBars, ClueList, CluePips, Leaderboard, Podium } from '../components/game';
+import { AnswerBars, ClueList, CluePips, Leaderboard, Podium, SegmentedTabs } from '../components/game';
 import { Confetti } from '../components/Confetti';
 
 export function Play({ navigate, code }: { navigate: (to: string, replace?: boolean) => void; code: string }) {
@@ -29,9 +29,14 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
 
   const round = snapshot?.round ?? null;
   const countdown = useCountdown(round, clockOffset);
+  // Must stay above the early returns below: `fatal` can flip mid-session
+  // when the host removes a player, and a conditional hook would change the
+  // hook count on that render.
+  const nextSeconds = useDeadline(snapshot?.autoAdvance?.at ?? null, clockOffset);
 
   const [choice, setChoice] = useState('');
   const [pending, setPending] = useState(false);
+  const [reviewTab, setReviewTab] = useState<'answer' | 'standings'>('answer');
 
   // Errors auto-dismiss so a stale toast never sits on top of the answer box.
   useEffect(() => {
@@ -51,6 +56,14 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
     setChoice('');
     setPending(false);
   }, [roundId]);
+
+  // The host moving the room to the standings should move every phone with
+  // it - but only as a default. Tapping back to the answer then sticks.
+  const phaseNow = snapshot?.phase;
+  useEffect(() => {
+    if (phaseNow === 'results') setReviewTab('answer');
+    else if (phaseNow === 'leaderboard') setReviewTab('standings');
+  }, [phaseNow]);
 
   // When a new clue lands: a short buzz, so a player watching the room rather
   // than their phone feels the round move on, and a scroll that brings the new
@@ -132,6 +145,7 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
   const playedThisRound = Boolean(self && resultPlayers?.some((p) => p.playerId === self.playerId));
   const myRank = snapshot?.leaderboard.find((e) => e.playerId === self?.playerId) ?? null;
   const won = phase === 'finished' && myRank?.rank === 1;
+  const leader = snapshot?.leaderboard[0];
 
   return (
     <div className="page">
@@ -303,7 +317,54 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
         </>
       ) : null}
 
-      {phase === 'results' && snapshot?.result ? (
+      {(phase === 'results' || phase === 'leaderboard') && snapshot?.result ? (
+        <>
+          {/* The host clicking "Show leaderboard" snaps everyone to the
+              standings, but the answer stays one tap away instead of being
+              destroyed, which is what used to happen. */}
+          <SegmentedTabs
+            tabs={[
+              { id: 'answer', label: 'The answer' },
+              { id: 'standings', label: 'Standings', badge: myRank ? `#${myRank.rank}` : undefined },
+            ]}
+            value={reviewTab}
+            onChange={setReviewTab}
+          />
+
+          {myRank && snapshot.roundsPlayed > 0 ? (
+            <div
+              className={`rankmove${myRank.rankDelta > 0 ? ' rankmove--up' : myRank.rankDelta < 0 ? ' rankmove--down' : ''}`}
+            >
+              <span className="rankmove__rank">#{myRank.rank}</span>
+              <span className="rankmove__text">
+                {myRank.rankDelta > 0
+                  ? `Up ${myRank.rankDelta}`
+                  : myRank.rankDelta < 0
+                    ? `Down ${-myRank.rankDelta}`
+                    : 'Holding'}{' '}
+                of {snapshot.leaderboard.length}
+              </span>
+              {leader && leader.playerId !== self?.playerId ? (
+                <span className="rankmove__gap">
+                  {formatXp(leader.score - (self?.score ?? 0))} XP behind {leader.nickname}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+
+          {reviewTab === 'standings' ? (
+            <div className="card stack">
+              <div className="row row--between">
+                <div className="card__title" style={{ margin: 0 }}>
+                  Leaderboard
+                </div>
+                <span className="pill">
+                  After {plural(snapshot.roundsPlayed, 'mystery', 'mysteries')}
+                </span>
+              </div>
+              <Leaderboard entries={snapshot.leaderboard} meId={self?.playerId} showGains />
+            </div>
+          ) : (
         <>
           {!playedThisRound ? (
             <div className="verdict verdict--idle">
@@ -382,21 +443,14 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
             />
           </div>
         </>
-      ) : null}
+          )}
 
-      {phase === 'leaderboard' && snapshot ? (
-        <div className="card stack">
-          <div className="row row--between">
-            <div className="card__title" style={{ margin: 0 }}>
-              Leaderboard
-            </div>
-            <span className="pill">After {plural(snapshot.roundsPlayed, 'mystery', 'mysteries')}</span>
-          </div>
-          <Leaderboard entries={snapshot.leaderboard} meId={self?.playerId} showGains />
           <p className="tiny dim center" style={{ margin: 0 }}>
-            Next mystery starts when the host is ready.
+            {nextSeconds > 0
+              ? `Next up in ${nextSeconds}s`
+              : 'Next mystery starts when the host is ready.'}
           </p>
-        </div>
+        </>
       ) : null}
 
       {phase === 'finished' && snapshot ? (

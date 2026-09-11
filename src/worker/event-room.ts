@@ -23,7 +23,9 @@ import {
   DOUBLE_MULTIPLIER,
   EVENT_NAME_MAX,
   INTRO_DURATION_MS,
+  LEADERBOARD_AUTO_MS,
   MAX_RESPONSE_MS,
+  RESULTS_AUTO_MS,
   RESPONSE_BUCKET_MS,
   streakBonus,
   NICKNAME_MAX,
@@ -38,6 +40,8 @@ import {
   type PublicRound,
   type RoundResult,
   type RoundStatus,
+  type AutoAdvance,
+  type AutoAdvanceTarget,
   type ServerMessage,
   type Snapshot,
 } from '../shared/types';
@@ -75,6 +79,8 @@ interface EventMeta {
   roundsPlayed: number;
   /** The next round scores double. Armed by the host or by plannedRounds. */
   doublePending: boolean;
+  /** Whether the event advances between phases on its own. */
+  autoAdvanceEnabled: boolean;
   /** How many mysteries the host intends to run, if they said so up front. */
   plannedRounds: number | null;
 }
@@ -137,6 +143,20 @@ interface RoundRecord {
   answers: Record<string, AnswerRecord>;
 }
 
+/**
+ * What the single Durable Object alarm is currently for.
+ *
+ * The alarm used to infer its own meaning from `this.round`, which is exactly
+ * why a second use of it would have clobbered clue progression. One record,
+ * one alarm, last write wins, and the handler never has to guess.
+ */
+interface Scheduled {
+  kind: 'clue' | 'advance';
+  at: number;
+  /** Only for `advance`. */
+  to?: AutoAdvanceTarget;
+}
+
 type Role = 'player' | 'host' | 'display';
 
 interface SocketMeta {
@@ -156,6 +176,7 @@ export class EventRoom extends DurableObject<Env> {
   private queue: string[] = [];
   /** Ranks going into the current round, used for the leaderboard arrows. */
   private previousRanks: Record<string, number> = {};
+  private scheduled: Scheduled | null = null;
 
   private readonly rate = new WeakMap<WebSocket, { count: number; windowStart: number }>();
 
@@ -169,11 +190,13 @@ export class EventRoom extends DurableObject<Env> {
         lastResult: RoundResult | null;
         queue: string[];
         previousRanks: Record<string, number>;
+        scheduled: Scheduled | null;
       }>('state');
       if (stored) {
         this.meta = {
           ...stored.meta,
           doublePending: stored.meta.doublePending ?? false,
+          autoAdvanceEnabled: stored.meta.autoAdvanceEnabled ?? true,
           plannedRounds: stored.meta.plannedRounds ?? null,
         };
         // A room restored from a blob written before these fields existed has
@@ -189,6 +212,7 @@ export class EventRoom extends DurableObject<Env> {
         this.lastResult = stored.lastResult ?? null;
         this.queue = stored.queue ?? [];
         this.previousRanks = stored.previousRanks ?? {};
+        this.scheduled = stored.scheduled ?? null;
       }
     });
   }
@@ -202,7 +226,37 @@ export class EventRoom extends DurableObject<Env> {
       lastResult: this.lastResult,
       queue: this.queue,
       previousRanks: this.previousRanks,
+      scheduled: this.scheduled,
     });
+  }
+
+  /**
+   * Arm the object's single alarm, recording what it is for.
+   *
+   * Persist before arming, deliberately. A crash between the two leaves an
+   * alarm with no record, which the handler no-ops on and the host clicks
+   * past - today's behaviour. The reverse leaves a record with no alarm, i.e.
+   * a countdown on the projector that reaches zero and does nothing.
+   */
+  private async schedule(s: Scheduled): Promise<void> {
+    this.scheduled = s;
+    await this.persist();
+    await this.ctx.storage.setAlarm(s.at);
+  }
+
+  private async cancelSchedule(): Promise<void> {
+    this.scheduled = null;
+    await this.persist();
+    await this.ctx.storage.deleteAlarm();
+  }
+
+  /** Queue the next phase hop, unless the host has switched that off. */
+  private async scheduleAdvance(to: AutoAdvanceTarget, durationMs: number): Promise<void> {
+    if (!this.meta?.autoAdvanceEnabled) {
+      await this.cancelSchedule();
+      return;
+    }
+    await this.schedule({ kind: 'advance', at: Date.now() + durationMs, to });
   }
 
   // ---------------------------------------------------------------- routing
@@ -230,6 +284,8 @@ export class EventRoom extends DurableObject<Env> {
       eventName?: string;
       hostToken?: string;
       plannedRounds?: number;
+      /** Tests turn this off so they can drive the phases themselves. */
+      autoAdvance?: boolean;
     };
     if (this.meta) return json({ error: 'already_initialised' }, 409);
     if (!body.eventCode || !body.hostToken) return json({ error: 'bad_request' }, 400);
@@ -242,6 +298,7 @@ export class EventRoom extends DurableObject<Env> {
       phase: 'lobby',
       roundsPlayed: 0,
       doublePending: false,
+      autoAdvanceEnabled: body.autoAdvance !== false,
       plannedRounds:
         typeof body.plannedRounds === 'number' && body.plannedRounds > 0
           ? Math.min(Math.floor(body.plannedRounds), MYSTERIES.length)
@@ -574,6 +631,19 @@ export class EventRoom extends DurableObject<Env> {
         this.broadcast();
         return;
       }
+      case 'hold_auto':
+        // Stop the countdown without turning the feature off for the night.
+        await this.cancelSchedule();
+        this.broadcast();
+        return;
+      case 'set_auto_advance': {
+        if (!this.meta) return;
+        this.meta.autoAdvanceEnabled = msg.enabled ?? !this.meta.autoAdvanceEnabled;
+        if (!this.meta.autoAdvanceEnabled) await this.cancelSchedule();
+        else await this.persist();
+        this.broadcast();
+        return;
+      }
       case 'pause':
         await this.pauseRound();
         return;
@@ -586,7 +656,11 @@ export class EventRoom extends DurableObject<Env> {
       case 'show_leaderboard':
         if (this.meta) {
           this.meta.phase = this.meta.roundsPlayed > 0 ? 'leaderboard' : 'lobby';
-          await this.persist();
+          if (this.meta.phase === 'leaderboard') {
+            await this.scheduleAdvance('round', LEADERBOARD_AUTO_MS);
+          } else {
+            await this.cancelSchedule();
+          }
           this.syncPhaseToD1();
           this.broadcast();
         }
@@ -595,7 +669,7 @@ export class EventRoom extends DurableObject<Env> {
         if (this.meta) {
           if (this.round && this.round.status !== 'ended') await this.endRound();
           this.meta.phase = 'finished';
-          await this.persist();
+          await this.cancelSchedule();
           this.syncPhaseToD1();
           this.broadcast();
         }
@@ -611,28 +685,28 @@ export class EventRoom extends DurableObject<Env> {
     }
   }
 
-  private async startRound(ws: WebSocket, requestedMysteryId?: string): Promise<void> {
+  private async startRound(ws: WebSocket | null, requestedMysteryId?: string): Promise<void> {
     if (!this.meta) return;
     if (this.meta.phase === 'round' && this.round && this.round.status !== 'ended') {
-      send(ws, { type: 'error', code: 'round_running', message: 'A round is already running.' });
+      sendMaybe(ws, { type: 'error', code: 'round_running', message: 'A round is already running.' });
       return;
     }
     if (Object.keys(this.players).length === 0) {
-      send(ws, { type: 'error', code: 'no_players', message: 'Nobody has joined yet.' });
+      sendMaybe(ws, { type: 'error', code: 'no_players', message: 'Nobody has joined yet.' });
       return;
     }
 
     let mysteryId = requestedMysteryId;
     if (mysteryId) {
       if (!getMystery(mysteryId)) {
-        send(ws, { type: 'error', code: 'no_such_mystery', message: 'That mystery does not exist.' });
+        sendMaybe(ws, { type: 'error', code: 'no_such_mystery', message: 'That mystery does not exist.' });
         return;
       }
       this.queue = this.queue.filter((id) => id !== mysteryId);
     } else {
       mysteryId = this.queue.shift();
       if (!mysteryId) {
-        send(ws, {
+        sendMaybe(ws, {
           type: 'error',
           code: 'out_of_mysteries',
           message: 'Every mystery has been played. Reset the event or end it.',
@@ -676,8 +750,7 @@ export class EventRoom extends DurableObject<Env> {
     this.meta.doublePending = false;
     this.meta.phase = 'round';
 
-    await this.persist();
-    await this.ctx.storage.setAlarm(this.round.clueEndsAt);
+    await this.schedule({ kind: 'clue', at: this.round.clueEndsAt });
 
     this.ctx.waitUntil(
       recordRoundStart(this.env.DB, {
@@ -703,8 +776,7 @@ export class EventRoom extends DurableObject<Env> {
     round.statusBeforePause = round.status;
     round.status = 'paused';
     round.pausedRemainingMs = Math.max(0, round.clueEndsAt - Date.now());
-    await this.ctx.storage.deleteAlarm();
-    await this.persist();
+    await this.cancelSchedule();
     this.broadcast();
   }
 
@@ -719,8 +791,7 @@ export class EventRoom extends DurableObject<Env> {
     round.clueEndsAt = now + remaining;
     round.pausedRemainingMs = null;
     round.statusBeforePause = null;
-    await this.persist();
-    await this.ctx.storage.setAlarm(round.clueEndsAt);
+    await this.schedule({ kind: 'clue', at: round.clueEndsAt });
     this.broadcast();
   }
 
@@ -729,15 +800,24 @@ export class EventRoom extends DurableObject<Env> {
    * clue, or close the round once clue five has had its turn.
    */
   override async alarm(): Promise<void> {
-    const round = this.round;
-    if (!round || (round.status !== 'active' && round.status !== 'intro')) return;
+    const s = this.scheduled;
+    if (!s) return;
 
     const now = Date.now();
-    if (now < round.clueEndsAt - 250) {
-      // Woke early (or a pause/resume moved the deadline). Re-arm and wait.
-      await this.ctx.storage.setAlarm(round.clueEndsAt);
+    if (now < s.at - 250) {
+      // Woke early, or a pause moved the deadline. Re-arm and wait.
+      await this.ctx.storage.setAlarm(s.at);
       return;
     }
+
+    this.scheduled = null;
+    if (s.kind === 'clue') await this.advanceClue(now);
+    else await this.runAutoAdvance(s, now);
+  }
+
+  private async advanceClue(now: number): Promise<void> {
+    const round = this.round;
+    if (!round || (round.status !== 'active' && round.status !== 'intro')) return;
 
     if (round.status === 'active' && round.currentClue >= CLUE_COUNT) {
       await this.endRound();
@@ -753,9 +833,37 @@ export class EventRoom extends DurableObject<Env> {
     round.clueEndsAt = base + CLUE_DURATION_MS;
     round.windowMs = CLUE_DURATION_MS;
 
-    await this.persist();
-    await this.ctx.storage.setAlarm(round.clueEndsAt);
+    await this.schedule({ kind: 'clue', at: round.clueEndsAt });
     this.broadcast();
+  }
+
+  /**
+   * The between-rounds hops. Re-validates the phase because the host may have
+   * clicked in the meantime - Cloudflare's input gate means an alarm cannot
+   * interleave with a message, so "the host already moved us on" is the only
+   * real race, and comparing the phase catches exactly that.
+   */
+  private async runAutoAdvance(s: Scheduled, _now: number): Promise<void> {
+    if (!this.meta || !this.meta.autoAdvanceEnabled) return;
+
+    if (s.to === 'leaderboard') {
+      if (this.meta.phase !== 'results') return;
+      this.meta.phase = 'leaderboard';
+      await this.scheduleAdvance('round', LEADERBOARD_AUTO_MS);
+      this.syncPhaseToD1();
+      this.broadcast();
+      return;
+    }
+
+    if (this.meta.phase !== 'leaderboard') return;
+    if (this.queue.length === 0 || Object.keys(this.players).length === 0) {
+      // Out of mysteries, or an empty room. Sit on the standings; ending the
+      // event is the host's moment, never the timer's.
+      await this.cancelSchedule();
+      this.broadcast();
+      return;
+    }
+    await this.startRound(null);
   }
 
   /**
@@ -769,7 +877,6 @@ export class EventRoom extends DurableObject<Env> {
 
     const mystery = getMystery(round.mysteryId);
     round.status = 'ended';
-    await this.ctx.storage.deleteAlarm();
 
     const perPlayer: PlayerRoundResult[] = [];
     const archivedAnswers: ArchivedAnswer[] = [];
@@ -855,7 +962,9 @@ export class EventRoom extends DurableObject<Env> {
     this.meta.roundsPlayed += 1;
     this.meta.phase = 'results';
 
-    await this.persist();
+    // Straight onto the results countdown - which also overwrites the clue
+    // schedule, so there is nothing left to cancel.
+    await this.scheduleAdvance('leaderboard', RESULTS_AUTO_MS);
 
     const eventCode = this.meta.eventCode;
     this.ctx.waitUntil(
@@ -891,8 +1000,7 @@ export class EventRoom extends DurableObject<Env> {
     this.meta.phase = 'lobby';
     this.queue = shuffle(MYSTERIES.map((m) => m.id));
 
-    await this.ctx.storage.deleteAlarm();
-    await this.persist();
+    await this.cancelSchedule();
     this.ctx.waitUntil(resetEventRows(this.env.DB, this.meta.eventCode));
     this.broadcast();
     this.broadcastCatalog();
@@ -946,6 +1054,17 @@ export class EventRoom extends DurableObject<Env> {
    * What the next round would score at. Armed explicitly by the host, or
    * implicitly when the planned final mystery is the one coming up.
    */
+  /** The pending phase hop, for clients to draw a countdown from. */
+  private publicAutoAdvance(): AutoAdvance | null {
+    const s = this.scheduled;
+    if (!s || s.kind !== 'advance' || !s.to) return null;
+    return {
+      to: s.to,
+      at: s.at,
+      durationMs: s.to === 'leaderboard' ? RESULTS_AUTO_MS : LEADERBOARD_AUTO_MS,
+    };
+  }
+
   private nextRoundMultiplier(): number {
     if (!this.meta) return 1;
     if (this.meta.doublePending) return DOUBLE_MULTIPLIER;
@@ -1083,6 +1202,8 @@ export class EventRoom extends DurableObject<Env> {
       totalMysteries: MYSTERIES.length,
       nextRoundMultiplier: this.nextRoundMultiplier(),
       plannedRounds: meta.plannedRounds,
+      autoAdvance: this.publicAutoAdvance(),
+      autoAdvanceEnabled: meta.autoAdvanceEnabled,
       serverTime: Date.now(),
     };
   }
@@ -1183,6 +1304,11 @@ function toArchivedPlayer(p: PlayerRecord): ArchivedPlayer {
     totalResponseMs: p.totalResponseMs,
     joinedAt: p.joinedAt,
   };
+}
+
+/** No-op when there is no socket: the auto-advance path has nobody to tell. */
+function sendMaybe(ws: WebSocket | null, message: ServerMessage): void {
+  if (ws) send(ws, message);
 }
 
 function send(ws: WebSocket, message: ServerMessage): void {

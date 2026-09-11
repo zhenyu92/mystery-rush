@@ -110,6 +110,41 @@ The rank number is keyed on the whole comparator, so the displayed order and the
 rank can never disagree. When the score alone did not decide first place, the
 podium says so: **"Won on speed - 6.1s avg vs 8.4s"**.
 
+### Pacing
+
+Nothing used to move between rounds until the host clicked, twice. The room now
+advances itself — 20s on the answer, then 15s on the standings — with the
+countdown drawn from server timestamps like everything else. The host gets a
+**Hold** button while a countdown is live, and a switch to turn it off for the
+night.
+
+It never auto-advances into the final results. Ending the event is the host's
+moment with a prize in their hand, not a timer's.
+
+All of it rides one explicit scheduled-timer record. The alarm used to infer
+its purpose from whether a round existed, which is exactly why adding a second
+use of it would have clobbered clue progression; now there is one record, one
+alarm, and the handler never guesses. The record is persisted *before* the
+alarm is armed — a crash between the two then leaves an alarm with no meaning,
+which no-ops, rather than a countdown that reaches zero and does nothing.
+
+### Sound
+
+The projector can make noise: clue stings, a tick in the last five seconds, a
+drumroll into the answer, a winner fanfare. It is synthesised with the Web
+Audio API — no files, no CDN, no dependency — and is **projector-only by
+construction**: `enable()` refuses unless `arm('display')` was called, and only
+`Display` calls it. Thirty phones drifting a few hundred milliseconds apart
+would be mush; the phone's channel is haptics.
+
+Everything is scheduled against `ctx.currentTime`, never `setTimeout`, because
+a backgrounded tab clamps timers to about 1Hz and the host will alt-tab to
+their console. Nothing in [`audio.ts`](src/client/lib/audio.ts) may throw.
+
+Browsers need a gesture, so the projector shows a one-time prompt that plays a
+confirmation tone — which doubles as a way to check the projector is actually
+routed to speakers before the room arrives.
+
 ### Reconnection
 
 Player credentials live in `localStorage`. A phone that locks, drops signal or reloads mid-round
