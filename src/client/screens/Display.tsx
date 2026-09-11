@@ -1,10 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { CLUE_POINTS, typeLabel, type LeaderboardEntry } from '../../shared/types';
-import { useCountdown } from '../lib/useCountdown';
+import { CLUE_POINTS, typeLabel, type LeaderboardEntry, type Snapshot } from '../../shared/types';
+import { useCountdown, useDeadline } from '../lib/useCountdown';
 import { useGameSocket } from '../lib/useGameSocket';
 import { Brand, ConnectionDot, TimerRing, formatSeconds, formatXp, plural } from '../components/common';
 import { AnswerBars, Leaderboard, Podium } from '../components/game';
 import { Confetti } from '../components/Confetti';
+import { SoundGate } from '../components/SoundGate';
+import { useStageAudio } from '../lib/useStageAudio';
+import { usePhaseTransition } from '../lib/usePhaseTransition';
+import { REVEAL_LEAD_MS, stageAudio } from '../lib/audio';
+import { pickStorylines } from '../lib/storylines';
 import { QrCode } from '../components/QrCode';
 
 /**
@@ -67,6 +72,28 @@ function Stage({ code }: { code: string }) {
 
   const finale = useFinaleSequence(phase === 'finished');
   const joinUrl = `${window.location.origin}/?code=${code}`;
+  const nextSeconds = useDeadline(snapshot?.autoAdvance?.at ?? null, clockOffset);
+  const reducedMotion =
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  useStageAudio({
+    phase,
+    round,
+    seconds: countdown.seconds,
+    finaleStage: finale.stage,
+    finaleTick: finale.tick,
+    reducedMotion,
+  });
+
+  // The intro-to-first-clue cut is the most important one on the projector
+  // and is not a phase change at all, so key the scene on both.
+  const phaseKey =
+    phase === 'round' ? (round?.status === 'intro' ? 'round:intro' : 'round:live') : phase;
+  // Results waits for the drumroll, so the chord and the answer land together.
+  const { shown: scene, state: sceneState } = usePhaseTransition(
+    phaseKey,
+    phaseKey === 'results' && stageAudio.isEnabled() ? REVEAL_LEAD_MS : 260,
+  );
 
   return (
     <div className="page page--stage">
@@ -80,9 +107,14 @@ function Stage({ code }: { code: string }) {
           <ConnectionDot status={status} />
         </div>
       </header>
+      <SoundGate />
 
+      {/* Confetti and the header stay outside this wrapper: an ancestor
+          with a transform or filter breaks the canvas's fixed position,
+          and the confetti would restart on every scene change. */}
+      <div className={`stage__scene stage__scene--${sceneState}`} key={scene}>
       {/* ------------------------------------------------------- lobby */}
-      {phase === 'lobby' && snapshot ? (
+      {scene === 'lobby' && snapshot ? (
         <div className="stack center" style={{ alignItems: 'center', gap: 24 }}>
           <div className="brand__tag">Join now on your phone</div>
           <div className="joinsplit" style={{ maxWidth: 1200 }}>
@@ -114,7 +146,7 @@ function Stage({ code }: { code: string }) {
       ) : null}
 
       {/* -------------------------------------------- round: get ready */}
-      {phase === 'round' && round && round.status === 'intro' ? (
+      {scene === 'round:intro' && round ? (
         <div className="intro">
           <div className="brand__tag">Mystery {round.roundIndex}</div>
           <span
@@ -137,7 +169,7 @@ function Stage({ code }: { code: string }) {
       ) : null}
 
       {/* ------------------------------------------------------- round */}
-      {phase === 'round' && round && round.status !== 'intro' ? (
+      {scene === 'round:live' && round ? (
         <div className="stage__grid">
           <div className="stack" style={{ gap: 20 }}>
             <div className="row">
@@ -197,7 +229,7 @@ function Stage({ code }: { code: string }) {
       ) : null}
 
       {/* ----------------------------------------------------- results */}
-      {phase === 'results' && snapshot?.result ? (
+      {scene === 'results' && snapshot?.result ? (
         <div className="stage__grid">
           <div className="stack" style={{ gap: 18 }}>
             <div className="reveal">
@@ -210,6 +242,7 @@ function Stage({ code }: { code: string }) {
             </div>
             <p className="stage__prev center">
               {snapshot.result.correctCount} of {snapshot.result.totalAnswers} answers were right
+              {nextSeconds > 0 ? ` · standings in ${nextSeconds}s` : ''}
             </p>
             <AnswerBars
               distribution={snapshot.result.distribution}
@@ -225,16 +258,46 @@ function Stage({ code }: { code: string }) {
       ) : null}
 
       {/* ------------------------------------------------- leaderboard */}
-      {phase === 'leaderboard' && snapshot ? (
+      {scene === 'leaderboard' && snapshot ? (
         <div className="stack center" style={{ gap: 18 }}>
+          {nextSeconds > 0 ? (
+            <div
+              className="pill pill--live"
+              style={{ fontSize: 'clamp(14px, 1.6vw, 22px)', padding: '10px 22px' }}
+            >
+              Next mystery in {nextSeconds}
+            </div>
+          ) : null}
           <h1 className="stage__title center">
             {'\u{1F4CA}'} Leaderboard{' '}
             <span className="muted" style={{ fontSize: '0.5em' }}>
               after {plural(snapshot.roundsPlayed, 'mystery', 'mysteries')}
             </span>
           </h1>
-          <div className="stage__lb" style={{ width: '100%', maxWidth: 1000, margin: '0 auto' }}>
-            <Leaderboard entries={snapshot.leaderboard} limit={10} showGains />
+          <div className="interlude">
+            <div className="stage__lb">
+              <Leaderboard entries={snapshot.leaderboard} limit={8} showGains />
+            </div>
+            <div className="stack">
+              <div className="stat">
+                <div className="stat__value">
+                  {snapshot.mysteriesRemaining > 0
+                    ? formatXp(snapshot.mysteriesRemaining * CLUE_POINTS[0])
+                    : '—'}
+                </div>
+                <div className="stat__label">
+                  {snapshot.mysteriesRemaining > 0
+                    ? `XP still on the table · ${snapshot.mysteriesRemaining} to play`
+                    : 'Last mystery played'}
+                </div>
+              </div>
+              <Storylines snapshot={snapshot} />
+              {snapshot.result ? (
+                <p className="stage__prev center">
+                  Last answer: <strong>{snapshot.result.answer}</strong>
+                </p>
+              ) : null}
+            </div>
           </div>
           {/* Someone 800 behind needs to know the gap can still be closed
               before the round starts, not after it. */}
@@ -251,7 +314,7 @@ function Stage({ code }: { code: string }) {
       ) : null}
 
       {/* -------------------------------------------------- the finale */}
-      {phase === 'finished' && snapshot ? (
+      {scene === 'finished' && snapshot ? (
         <FinalReveal
           stage={finale.stage}
           tick={finale.tick}
@@ -259,6 +322,7 @@ function Stage({ code }: { code: string }) {
           rounds={snapshot.roundsPlayed}
         />
       ) : null}
+      </div>
 
       {!snapshot ? (
         <div className="center stack" style={{ alignItems: 'center' }}>
@@ -266,6 +330,30 @@ function Stage({ code }: { code: string }) {
           <p className="muted">Connecting to event {code}...</p>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** Rotating one-liners for the between-rounds screen. */
+function Storylines({ snapshot }: { snapshot: Snapshot }) {
+  const lines = pickStorylines(snapshot);
+  const [i, setI] = useState(0);
+
+  useEffect(() => {
+    if (lines.length < 2) return;
+    const id = setInterval(() => setI((n) => (n + 1) % lines.length), 5000);
+    return () => clearInterval(id);
+  }, [lines.length]);
+
+  if (lines.length === 0) return null;
+  const line = lines[i % lines.length];
+  return (
+    <div className="storyline" key={line.id}>
+      <div className="storyline__emoji">{line.emoji}</div>
+      <div>
+        <div className="brand__tag">{line.label}</div>
+        <div className="storyline__value">{line.value}</div>
+      </div>
     </div>
   );
 }

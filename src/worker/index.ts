@@ -77,7 +77,11 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   // POST /api/events - create an event and mint the host credential.
   if (path === '/api/events' && request.method === 'POST') {
-    const body = await readJson<{ eventName?: string; plannedRounds?: number }>(request);
+    const body = await readJson<{
+      eventName?: string;
+      plannedRounds?: number;
+      autoAdvance?: boolean;
+    }>(request);
     const eventName = sanitizeText(body?.eventName, EVENT_NAME_MAX, 'Mystery Rush Night');
     // How many mysteries the host intends to run. Lets the room be told which
     // one is the last, and auto-arms it for double points.
@@ -92,7 +96,13 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       new Request('https://room/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ eventCode: code, eventName, hostToken, plannedRounds }),
+        body: JSON.stringify({
+          eventCode: code,
+          eventName,
+          hostToken,
+          plannedRounds,
+          autoAdvance: body?.autoAdvance,
+        }),
       }),
     );
     if (!res.ok) return json({ error: 'init_failed', message: 'Could not create the event.' }, 500);

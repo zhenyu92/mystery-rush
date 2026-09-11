@@ -44,3 +44,24 @@ export function useCountdown(round: PublicRound | null, clockOffset: number): Co
     fraction: Math.min(1, Math.max(0, remainingMs / total)),
   };
 }
+
+/**
+ * Seconds left until a server deadline, for the between-rounds countdowns.
+ *
+ * Deliberately a sibling of useCountdown rather than a generalisation of it:
+ * that one is shaped around a round's window and its fraction, and this one
+ * only ever needs a number. Clamped at zero so a late alarm shows a settled
+ * state rather than counting into the negative.
+ */
+export function useDeadline(at: number | null, clockOffset: number): number {
+  const [, force] = useState(0);
+
+  useEffect(() => {
+    if (at === null) return;
+    const id = setInterval(() => force((n) => n + 1), 250);
+    return () => clearInterval(id);
+  }, [at]);
+
+  if (at === null) return 0;
+  return Math.max(0, Math.ceil((at - (Date.now() + clockOffset)) / 1000));
+}

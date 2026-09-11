@@ -229,9 +229,28 @@ export interface Snapshot {
   nextRoundMultiplier: number;
   /** How many mysteries the host planned, if they said up front. */
   plannedRounds: number | null;
+  /** A countdown to the next phase, or null if the room is waiting on the host. */
+  autoAdvance: AutoAdvance | null;
+  /** Whether the event advances itself at all. Host can switch it off. */
+  autoAdvanceEnabled: boolean;
   /** Server epoch ms at the moment the snapshot was built. */
   serverTime: number;
 }
+
+/** What the room is counting down to between rounds. */
+export type AutoAdvanceTarget = 'leaderboard' | 'round';
+
+export interface AutoAdvance {
+  to: AutoAdvanceTarget;
+  /** Server epoch ms. Clients draw the countdown from this, as with clues. */
+  at: number;
+  durationMs: number;
+}
+
+/** How long the answer and the distribution stay up before the standings. */
+export const RESULTS_AUTO_MS = 20_000;
+/** How long the standings stay up before the next mystery starts itself. */
+export const LEADERBOARD_AUTO_MS = 15_000;
 
 /** A mystery as offered to the host in the picker - no answer, no clues. */
 export interface MysteryChoice {
@@ -257,6 +276,8 @@ export type ServerMessage =
 
 export type HostAction =
   | 'set_double'
+  | 'hold_auto'
+  | 'set_auto_advance'
   | 'start_round'
   | 'pause'
   | 'resume'

@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { CLUE_POINTS, EVENT_NAME_MAX, typeLabel, type HostAction } from '../../shared/types';
+import {
+  CLUE_POINTS,
+  EVENT_NAME_MAX,
+  LEADERBOARD_AUTO_MS,
+  RESULTS_AUTO_MS,
+  typeLabel,
+  type HostAction,
+} from '../../shared/types';
 import { ApiError, api } from '../lib/api';
 import { session } from '../lib/session';
-import { useCountdown } from '../lib/useCountdown';
+import { useCountdown, useDeadline } from '../lib/useCountdown';
 import { useGameSocket } from '../lib/useGameSocket';
 import { Brand, ConnectionDot, Modal, TimerRing, Toast, formatXp, plural } from '../components/common';
 import { AnswerBars, ClueList, CluePips, Leaderboard, Podium } from '../components/game';
@@ -249,6 +256,7 @@ function HostConsole({
   const total = round?.playerCount ?? snapshot?.players.length ?? 0;
   const liveBrief = hostBrief && round && hostBrief.roundId === round.roundId ? hostBrief : null;
   const doubleArmed = (snapshot?.nextRoundMultiplier ?? 1) > 1;
+  const autoSeconds = useDeadline(snapshot?.autoAdvance?.at ?? null, clockOffset);
   const isFinalPlanned =
     snapshot?.plannedRounds != null && snapshot.roundsPlayed + 1 === snapshot.plannedRounds;
 
@@ -482,6 +490,14 @@ function HostConsole({
                 </button>
               ) : null}
 
+              {/* Only while something is actually counting down - a button
+                  that does nothing most of the time is worse than none. */}
+              {snapshot?.autoAdvance ? (
+                <button className="btn btn--ghost" onClick={() => act('hold_auto')}>
+                  {'⏸'} Hold ({autoSeconds}s)
+                </button>
+              ) : null}
+
               {phase !== 'finished' && phase !== 'lobby' ? (
                 <button className="btn btn--ghost" onClick={() => setConfirm({ kind: 'end' })}>
                   {'\u{1F3C1}'} End event
@@ -496,6 +512,19 @@ function HostConsole({
                   : 'Clues advance on their own - you never need to click through them. Pause freezes the clock for the whole room.'}
               </p>
             ) : null}
+
+            <label className="row tiny dim" style={{ gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={snapshot?.autoAdvanceEnabled ?? true}
+                onChange={(e) =>
+                  send({ type: 'host', action: 'set_auto_advance', enabled: e.target.checked })
+                }
+              />
+              Advance between mysteries on its own ({RESULTS_AUTO_MS / 1000}s on the answer, then{' '}
+              {LEADERBOARD_AUTO_MS / 1000}s on the standings). Turn it off if you are doing a lot of
+              talking.
+            </label>
 
             <div className="row">
               <button className="btn btn--ghost btn--sm" onClick={() => window.open(`/display?code=${code}`, '_blank')}>

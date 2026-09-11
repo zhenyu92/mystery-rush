@@ -77,4 +77,14 @@ export const session = {
   lastHostCode(): string | null {
     return read<string>(LAST_HOST);
   },
+
+  soundPref(): 'on' | 'off' | null {
+    return read<'on' | 'off'>(SOUND_KEY);
+  },
+  saveSoundPref(value: 'on' | 'off'): void {
+    write(SOUND_KEY, value);
+  },
 };
+
+const SOUND_KEY = 'mysteryrush.sound';
+

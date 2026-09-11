@@ -11,7 +11,9 @@ import {
   CLUE_POINTS,
   INTRO_DURATION_MS,
   DOUBLE_MULTIPLIER,
+  LEADERBOARD_AUTO_MS,
   MAX_RESPONSE_MS,
+  RESULTS_AUTO_MS,
   streakBonus,
 } from '../src/shared/types.ts';
 
@@ -68,7 +70,9 @@ async function waitUntil(fn, ms, what) {
 
 const run = async () => {
 console.log(`\n=== 1. Event creation and joining (${HOST}) ===`);
-const created = await post('/api/events', { eventName: 'E2E Test Night' });
+// Auto-advance off: this suite drives the phases itself and asserts on them,
+// so a timer moving the room on underneath it would make the checks flaky.
+const created = await post('/api/events', { eventName: 'E2E Test Night', autoAdvance: false });
 check('event created', created.status === 201 && /^[A-Z0-9]{5}$/.test(created.body.eventCode), JSON.stringify(created.body));
 const CODE = created.body.eventCode, HOSTTOK = created.body.hostToken;
 console.log(`  code=${CODE}`);
@@ -332,7 +336,11 @@ check('their socket closed', pb.closed);
 
 // --------------------------------------------------- a planned final round
 console.log('=== 10. A planned final mystery arms itself for double points ===');
-const ev2 = await post('/api/events', { eventName: 'Double Test', plannedRounds: 1 });
+const ev2 = await post('/api/events', {
+  eventName: 'Double Test',
+  plannedRounds: 1,
+  autoAdvance: false,
+});
 check('plannedRounds is accepted', ev2.body.plannedRounds === 1, JSON.stringify(ev2.body));
 const CODE2 = ev2.body.eventCode;
 const zoe = (await post(`/api/events/${CODE2}/join`, { nickname: 'Zoe' })).body;
@@ -362,6 +370,56 @@ check('the base stays the plain clue value', zoeResult.basePoints === CLUE_POINT
 check('the leaderboard shows the doubled total',
   pz.last.snapshot.leaderboard[0].score === CLUE_POINTS[0] * DOUBLE_MULTIPLIER);
 [h2, pz].forEach((c) => { try { c.ws.close(); } catch {} });
+
+// --------------------------------------------------------- auto-advance
+console.log('=== 11. The room advances itself between rounds ===');
+const ev3 = await post('/api/events', { eventName: 'Pacing Test' });
+const CODE3 = ev3.body.eventCode;
+const ann = (await post(`/api/events/${CODE3}/join`, { nickname: 'Ann' })).body;
+const h3 = connect(`code=${CODE3}&role=host&hostToken=${ev3.body.hostToken}`);
+const pn = connect(`code=${CODE3}&role=player&playerId=${ann.playerId}&playerToken=${ann.playerToken}`);
+await Promise.all([waitOpen(h3), waitOpen(pn)]);
+await sleep(600);
+check('auto-advance is on by default', pn.last?.snapshot.autoAdvanceEnabled === true);
+check('nothing is counting down in the lobby', pn.last?.snapshot.autoAdvance === null);
+
+send(h3, { type: 'host', action: 'start_round' });
+await waitFor(pn, (s) => s.round?.currentClue === 1, INTRO_DURATION_MS + 6000, 'pacing clue 1');
+await waitUntil(() => h3.briefs.length >= 1, 5000, 'pacing brief');
+check('no countdown while a round is live', pn.last?.snapshot.autoAdvance === null);
+
+send(pn, { type: 'submit_answer', option: h3.briefs[0].answer });
+await waitFor(pn, (s) => s.phase === 'results', 8000, 'pacing results');
+check('results start a countdown to the standings',
+  pn.last?.snapshot.autoAdvance?.to === 'leaderboard',
+  JSON.stringify(pn.last?.snapshot.autoAdvance));
+check('and it is the documented length',
+  pn.last?.snapshot.autoAdvance?.durationMs === RESULTS_AUTO_MS);
+
+// Hold it, to prove the host can take the wheel back.
+send(h3, { type: 'host', action: 'hold_auto' });
+await sleep(800);
+check('the host can hold the countdown', pn.last?.snapshot.autoAdvance === null);
+await sleep(3000);
+check('and holding really does stop it', pn.last?.snapshot.phase === 'results');
+
+// Let it run for real this time.
+send(h3, { type: 'host', action: 'show_leaderboard' });
+await waitFor(pn, (s) => s.phase === 'leaderboard', 4000, 'pacing leaderboard');
+check('the standings queue the next mystery', pn.last?.snapshot.autoAdvance?.to === 'round',
+  JSON.stringify(pn.last?.snapshot.autoAdvance));
+const startedItself = await waitFor(pn, (s) => s.phase === 'round', LEADERBOARD_AUTO_MS + 8000,
+  'self-started round');
+check('the next mystery starts itself', startedItself);
+check('and it is a fresh round', pn.last?.snapshot.round.roundIndex === 2);
+
+send(h3, { type: 'host', action: 'set_auto_advance', enabled: false });
+await sleep(600);
+check('the host can switch it off entirely', pn.last?.snapshot.autoAdvanceEnabled === false);
+send(h3, { type: 'host', action: 'end_round' });
+await waitFor(pn, (s) => s.phase === 'results', 8000, 'manual results');
+check('with it off, results wait for the host', pn.last?.snapshot.autoAdvance === null);
+[h3, pn].forEach((c) => { try { c.ws.close(); } catch {} });
 
 console.log(`\n================  ${pass} passed, ${fail} failed  ================\n`);
 [host, pa, pb, pc, disp].forEach((s) => { try { s.ws.close(); } catch {} });

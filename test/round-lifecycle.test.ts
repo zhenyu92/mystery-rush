@@ -241,7 +241,17 @@ describe('ending a round', () => {
 
     await table.players.Grace.socket.say({ type: 'submit_answer', option: answer });
     assert.equal(table.snapshot().phase, 'results');
-    assert.equal(table.harness.stateFor(table.eventCode).storage.alarm, null, 'the clock is disarmed');
+
+    // The clue clock is done, but the alarm is not idle: it now holds the
+    // countdown out of the results screen. What matters is that it is no
+    // longer a clue timer.
+    const snap = table.snapshot();
+    assert.equal(snap.autoAdvance?.to, 'leaderboard', 'the results countdown is running');
+    assert.equal(
+      table.harness.stateFor(table.eventCode).storage.alarm,
+      snap.autoAdvance?.at,
+      'and the alarm is set for exactly that',
+    );
   });
 
   it('ignores a player whose phone dropped when deciding everyone is done', async () => {
