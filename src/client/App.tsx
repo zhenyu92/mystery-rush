@@ -3,6 +3,7 @@ import { Landing } from './screens/Landing';
 import { Play } from './screens/Play';
 import { Host } from './screens/Host';
 import { Display } from './screens/Display';
+import { About } from './screens/About';
 
 export function App() {
   const [location, navigate] = useLocation();
@@ -15,6 +16,8 @@ export function App() {
       return <Host navigate={navigate} code={code} />;
     case '/display':
       return <Display navigate={navigate} code={code} />;
+    case '/about':
+      return <About navigate={navigate} />;
     default:
       return <Landing navigate={navigate} initialCode={code} />;
   }

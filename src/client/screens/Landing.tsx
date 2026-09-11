@@ -215,6 +215,10 @@ export function Landing({
         </div>
       </div>
 
+      <button className="link tiny center" onClick={() => navigate('/about')}>
+        What is Mystery Rush?
+      </button>
+
       {error ? <Toast message={error} error /> : null}
     </div>
   );

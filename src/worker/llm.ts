@@ -28,7 +28,7 @@ import type { Env } from './db';
  * skip prose parsing entirely, and because a 70B model writes noticeably
  * better clues than the 8B ones at a latency the host will still sit through.
  */
-const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+export const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
 /** A single request should never hang the host's console. */
 const TIMEOUT_MS = 45_000;
@@ -188,7 +188,7 @@ Each mystery needs a title, an answer, 5 answer options, and ${CLUE_COUNT} clues
 Reply with JSON only.`;
 }
 
-function mysterySchema(categories: string[], count: number) {
+export function mysterySchema(categories: string[], count: number) {
   const mystery = {
     type: 'object',
     properties: {
@@ -255,7 +255,7 @@ export async function generateMysteries(env: Env, opts: GenerateOptions): Promis
 
 // ------------------------------------------------------------- evaluation
 
-const EVALUATION_SCHEMA = {
+export const EVALUATION_SCHEMA = {
   type: 'object',
   properties: {
     approved: { type: 'boolean' },
@@ -280,9 +280,28 @@ export async function evaluateMystery(
   mystery: Mystery,
   requestedDifficulty: Difficulty,
 ): Promise<MysteryEvaluation> {
+  const parsed = (await runModel(env, {
+    messages: [
+      { role: 'system', content: 'You are a strict quiz editor. You reply with JSON and nothing else.' },
+      { role: 'user', content: buildEvaluationPrompt(mystery, requestedDifficulty) },
+    ],
+    response_format: { type: 'json_schema', json_schema: EVALUATION_SCHEMA },
+    max_tokens: 600,
+    temperature: 0.2,
+  })) as Partial<MysteryEvaluation>;
+
+  return clampEvaluation(parsed, requestedDifficulty);
+}
+
+/**
+ * Exported so the offline prompt evaluation scores with exactly the same
+ * rubric production uses. A comparison against a different judge would not
+ * be telling you anything about production.
+ */
+export function buildEvaluationPrompt(mystery: Mystery, requestedDifficulty: Difficulty): string {
   const clueList = mystery.clues.map((c, i) => `  Clue ${i + 1}: ${c}`).join('\n');
 
-  const prompt = `Judge one question from Mystery Rush, a live quiz. Clues are revealed one at a time,
+  return `Judge one question from Mystery Rush, a live quiz. Clues are revealed one at a time,
 earlier guesses score more, and the player picks from a dropdown of options.
 
 Category: ${mystery.type}
@@ -308,18 +327,13 @@ on a projector in front of a room. Put each concrete problem in feedback as a sh
 an empty list if there is nothing wrong.
 
 Reply with JSON only.`;
+}
 
-  const parsed = (await runModel(env, {
-    messages: [
-      { role: 'system', content: 'You are a strict quiz editor. You reply with JSON and nothing else.' },
-      { role: 'user', content: prompt },
-    ],
-    response_format: { type: 'json_schema', json_schema: EVALUATION_SCHEMA },
-    max_tokens: 600,
-    temperature: 0.2,
-  })) as Partial<MysteryEvaluation>;
-
-  // The evaluator is as untrusted as the generator, so clamp everything.
+/** The evaluator is as untrusted as the generator, so clamp everything. */
+export function clampEvaluation(
+  parsed: Partial<MysteryEvaluation>,
+  requestedDifficulty: Difficulty,
+): MysteryEvaluation {
   const score = Number(parsed.score);
   const ambiguity = Number(parsed.ambiguity);
   return {

@@ -1850,3 +1850,71 @@ p {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Collapsed by default: the generator is a preparation tool, and the picker
+   below it is what the host uses every round. */
+.aitoggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.aitoggle__chevron {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  line-height: 1;
+  color: var(--muted);
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.aitoggle:hover .aitoggle__chevron {
+  color: var(--text);
+}
+
+/* ------------------------------------------------------- project page */
+
+.aboutgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.aboutflow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: rgba(6, 3, 16, 0.5);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin: 0;
+  overflow-x: auto;
+}
+.shots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.shot {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.shot img {
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--stroke);
+  background: var(--night-800);
+}

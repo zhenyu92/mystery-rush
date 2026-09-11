@@ -1,0 +1,105 @@
+{
+  "a": {
+    "total": 20,
+    "valid": 15,
+    "invalid": 5,
+    "categoryViolations": 0,
+    "clueCount": 0,
+    "answerNotInOptions": 0,
+    "duplicateOptions": 0,
+    "duplicateAnswers": 4,
+    "answerRevealed": 0,
+    "earlyTell": 0,
+    "emptyOrShort": 1,
+    "ambiguous": 0,
+    "avgScore": 96,
+    "avgAmbiguity": 0.053,
+    "approved": 15,
+    "scored": 15,
+    "examples": [
+      {
+        "answer": "The Shawshank Redemption",
+        "type": "movie",
+        "clue1": "Released in 1994",
+        "clue2": "Stars Tim Robbins and Morgan Freeman",
+        "issues": [
+          "duplicate_answer: \"The Shawshank Redemption\" already appears in this pool."
+        ],
+        "feedback": []
+      },
+      {
+        "answer": "The Silence of the Lambs",
+        "type": "movie",
+        "clue1": "Released in 1991",
+        "clue2": "Stars Jodie Foster and Anthony Hopkins",
+        "issues": [
+          "duplicate_answer: \"The Silence of the Lambs\" already appears in this pool."
+        ],
+        "feedback": []
+      },
+      {
+        "answer": "Sushi",
+        "type": "food",
+        "clue1": "Originated in Japan",
+        "clue2": "Typically served with wasabi",
+        "issues": [
+          "duplicate_answer: \"Sushi\" already appears in this pool."
+        ],
+        "feedback": []
+      },
+      {
+        "answer": "Tacos",
+        "type": "food",
+        "clue1": "Originated in Mexico",
+        "clue2": "Typically served with meat or vegetables",
+        "issues": [
+          "duplicate_answer: \"Tacos\" already appears in this pool."
+        ],
+        "feedback": []
+      }
+    ]
+  },
+  "b": {
+    "total": 20,
+    "valid": 19,
+    "invalid": 1,
+    "categoryViolations": 0,
+    "clueCount": 0,
+    "answerNotInOptions": 0,
+    "duplicateOptions": 0,
+    "duplicateAnswers": 1,
+    "answerRevealed": 0,
+    "earlyTell": 0,
+    "emptyOrShort": 0,
+    "ambiguous": 0,
+    "avgScore": 95,
+    "avgAmbiguity": 0.042,
+    "approved": 19,
+    "scored": 19,
+    "examples": [
+      {
+        "answer": "The Shawshank Redemption",
+        "type": "movie",
+        "clue1": "I'm a movie that was initially a box office disappointment.",
+        "clue2": "I've become a classic of my genre, and I'm often cited as one of the greatest films of all time.",
+        "issues": [
+          "duplicate_answer: \"The Shawshank Redemption\" already appears in this pool."
+        ],
+        "feedback": []
+      },
+      {
+        "answer": "Black Hole",
+        "type": "space",
+        "clue1": "I am a region in space where gravity is so strong, nothing can escape.",
+        "clue2": "My existence was predicted by a famous physicist over a century ago.",
+        "issues": [
+          "names_distractor: Clue 3 names another option, \"Star\"."
+        ],
+        "feedback": [],
+        "ambiguity": 0
+      }
+    ]
+  },
+  "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  "minutes": "3.0"
+}

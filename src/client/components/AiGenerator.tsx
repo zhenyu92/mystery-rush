@@ -27,6 +27,10 @@ export function AiGenerator({
   hostToken: string;
   onApproved: (mystery: Mystery) => void;
 }) {
+  // Closed by default. Preparation is occasional; the picker and the controls
+  // below it are what the host reaches for every round, and an always-open
+  // panel pushes them off the screen.
+  const [open, setOpen] = useState(false);
   const [categories, setCategories] = useState<string[]>(['landmark']);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   const [count, setCount] = useState(5);
@@ -123,16 +127,33 @@ export function AiGenerator({
     }
   };
 
+  const ready = pool?.candidates.length ?? 0;
+
   return (
     <div className="card stack">
-      <div className="row row--between">
-        <div className="card__title" style={{ margin: 0 }}>
+      <button
+        className="aitoggle"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="card__title" style={{ margin: 0 }}>
           {'✨'} Generate with AI
-        </div>
-        {pool && pool.candidates.length > 0 ? (
-          <span className="pill pill--muted">{approved.size} added</span>
-        ) : null}
-      </div>
+        </span>
+        <span className="row" style={{ gap: 6 }}>
+          {approved.size > 0 ? <span className="pill pill--good">{approved.size} added</span> : null}
+          {ready > 0 && !open ? <span className="pill pill--muted">{ready} to review</span> : null}
+          <span className="aitoggle__chevron">{open ? '−' : '+'}</span>
+        </span>
+      </button>
+
+      {!open ? (
+        <p className="tiny dim" style={{ margin: 0 }}>
+          Write a pool of mysteries in seconds, then review each one before it can be played.
+        </p>
+      ) : null}
+
+      {open ? (
+        <>
 
       <div className="field">
         <span className="field__label">Categories</span>
@@ -255,6 +276,9 @@ export function AiGenerator({
         <p className="tiny dim" style={{ margin: 0 }}>
           Nothing survived validation this time. Try again, or a different category.
         </p>
+      ) : null}
+
+        </>
       ) : null}
 
       {preview ? (
