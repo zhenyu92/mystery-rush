@@ -74,15 +74,21 @@ console.log(`  code=${CODE}`);
 
 const a = (await post(`/api/events/${CODE}/join`, { nickname: 'SmokeA' })).body;
 const b = (await post(`/api/events/${CODE}/join`, { nickname: 'SmokeB' })).body;
+// A third player who stays connected and never answers. Without them the
+// round would end the moment A and B lock in - correct behaviour, but it
+// would leave the clue clock itself untested, which is the whole point of
+// running this against the real platform.
+const c = (await post(`/api/events/${CODE}/join`, { nickname: 'SmokeC' })).body;
 check('players joined', Boolean(a.playerId && b.playerId));
 
 const host = conn(`code=${CODE}&role=host&hostToken=${ev.body.hostToken}`);
 const pa = conn(`code=${CODE}&role=player&playerId=${a.playerId}&playerToken=${a.playerToken}`);
 const pb = conn(`code=${CODE}&role=player&playerId=${b.playerId}&playerToken=${b.playerToken}`);
-await Promise.all([waitOpen(host), waitOpen(pa), waitOpen(pb)]);
-check('WebSockets connected over wss', host.open && pa.open && pb.open);
+const pc = conn(`code=${CODE}&role=player&playerId=${c.playerId}&playerToken=${c.playerToken}`);
+await Promise.all([waitOpen(host), waitOpen(pa), waitOpen(pb), waitOpen(pc)]);
+check('WebSockets connected over wss', host.open && pa.open && pb.open && pc.open);
 await sleep(600);
-check('lobby synchronised', pa.last?.snapshot.players.length === 2);
+check('lobby synchronised', pa.last?.snapshot.players.length === 3);
 
 console.log('\n=== The Durable Object alarm is the clock ===');
 const t0 = Date.now();
@@ -127,7 +133,12 @@ check(
 check('both clients advanced together', pb.last?.snapshot.round.currentClue === 2);
 
 console.log('\n=== Scoring and reveal ===');
-host.ws.send(JSON.stringify({ type: 'host', action: 'end_round' }));
+// With the clock proven, letting the last player answer should close the
+// round on its own rather than needing the host.
+pc.ws.send(JSON.stringify({ type: 'submit_answer', option: ANSWER }));
+const closedItself = await waitFor(pa, (s) => s.phase === 'results', 6000, 'early end');
+check('the round closed itself once everyone had answered', closedItself);
+if (!closedItself) host.ws.send(JSON.stringify({ type: 'host', action: 'end_round' }));
 await waitFor(pa, (s) => s.phase === 'results', 8000, 'results');
 const result = pa.last.snapshot.result;
 check('answer revealed after the round', result?.answer === ANSWER);
@@ -140,7 +151,7 @@ host.ws.send(JSON.stringify({ type: 'host', action: 'end_event' }));
 await waitFor(pa, (s) => s.phase === 'finished', 8000, 'finish');
 check('event finished with a winner', pa.last?.snapshot.leaderboard[0].nickname === 'SmokeA');
 
-[host, pa, pb].forEach((s) => { try { s.ws.close(); } catch {} });
+[host, pa, pb, pc].forEach((s) => { try { s.ws.close(); } catch {} });
 console.log(`\n================  ${pass} passed, ${fail} failed  ================`);
 console.log(`TEST_EVENT_CODE=${CODE}`);
 process.exit(fail === 0 ? 0 : 1);
