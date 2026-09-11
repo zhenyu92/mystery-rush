@@ -6,7 +6,13 @@
  * /api/* or /ws is served from the built React app.
  */
 
-import { EVENT_NAME_MAX, MAX_POOL_SIZE, isDifficulty, isMysteryType } from '../shared/types';
+import {
+  EVENT_NAME_MAX,
+  MAX_POOL_SIZE,
+  POOL_DEADLINE_MS,
+  isDifficulty,
+  isMysteryType,
+} from '../shared/types';
 import { eventExists } from './db';
 import type { Env } from './db';
 import { MYSTERIES, generateEventCode, newToken, sanitizeText } from './game';
@@ -219,8 +225,9 @@ async function handlePool(request: Request, env: Env, code: string): Promise<Res
   const body = await readJson<{ hostToken?: string }>(request);
   const hostToken = body?.hostToken ?? '';
 
+  // This also starts the clock, on the first request rather than at creation.
   const verify = await room(env, code).fetch(
-    new Request('https://room/verify-host', {
+    new Request('https://room/pool-begin', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ hostToken }),
@@ -234,6 +241,7 @@ async function handlePool(request: Request, env: Env, code: string): Promise<Res
     poolDifficulty?: string;
     wanted?: number;
     have?: number;
+    elapsedMs?: number;
   };
 
   const categories = (spec.poolCategories ?? []).filter(isMysteryType);
@@ -243,6 +251,15 @@ async function handlePool(request: Request, env: Env, code: string): Promise<Res
 
   if (categories.length === 0 || missing <= 0) {
     return json({ added: 0, have, wanted, done: true, error: null });
+  }
+
+  // Out of time. Stop asking, say so, and let the built-in bank cover the
+  // rest - a host standing in front of a room needs an answer more than they
+  // need the questions to have been written by a model.
+  if ((spec.elapsedMs ?? 0) >= POOL_DEADLINE_MS) {
+    const error = `Could not write all ${wanted} questions in ${POOL_DEADLINE_MS / 1000}s. The remaining ${missing} will come from the built-in bank.`;
+    await recordPool(env, code, hostToken, [], error);
+    return json({ added: 0, have, wanted, done: true, timedOut: true, error });
   }
 
   const difficulty = isDifficulty(spec.poolDifficulty) ? spec.poolDifficulty : 'medium';

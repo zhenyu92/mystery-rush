@@ -49,6 +49,8 @@ export interface PoolProgress {
   wanted: number;
   /** True when there is nothing further worth asking for. */
   done: boolean;
+  /** Set when the two-minute budget ran out. Retrying cannot help. */
+  timedOut?: boolean;
   error: string | null;
 }
 

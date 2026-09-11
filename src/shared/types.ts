@@ -243,8 +243,14 @@ export interface Snapshot {
   serverTime: number;
 }
 
-/** What the room is counting down to between rounds. */
-export type AutoAdvanceTarget = 'leaderboard' | 'round';
+/**
+ * What the room is counting down to between rounds.
+ *
+ * `finished` only ever follows the last of a planned set. A host who never
+ * said how many mysteries they were running still ends the event by hand -
+ * the timer is not allowed to guess that a night is over.
+ */
+export type AutoAdvanceTarget = 'leaderboard' | 'round' | 'finished';
 
 export interface AutoAdvance {
   to: AutoAdvanceTarget;
@@ -404,7 +410,24 @@ export interface PoolStatus {
   difficulty: Difficulty;
   /** Set when the last preparation attempt failed, for the host to see. */
   lastError: string | null;
+  /**
+   * Server epoch ms at which preparation gives up, or null before it starts.
+   * On the wire rather than computed on the client so the lobby countdown
+   * uses the same clock as the game's.
+   */
+  expiresAt: number | null;
 }
+
+/**
+ * How long the pool gets before it is declared a failure and the built-in
+ * bank takes over.
+ *
+ * Two minutes is about as long as a room will wait while the host stands
+ * there, and the fallback is a complete, hand-written game rather than a
+ * degraded one - so the cost of giving up early is much lower than the cost
+ * of a lobby that never resolves.
+ */
+export const POOL_DEADLINE_MS = 120_000;
 
 export interface GenerationRequest {
   categories: string[];

@@ -125,8 +125,12 @@ Eight seconds on the standings rather than fifteen because the standings are a
 beat, not a scene — long enough to find your own name, short enough that the room
 does not start talking.
 
-It never auto-advances into the final results. Ending the event is the host's
-moment with a prize in their hand, not a timer's.
+A host who said how many mysteries they were running gets the podium after the
+last one, without pressing anything — the count was a promise to the room, and
+the room keeps it. `start_round` refuses a mystery past that number, so nothing
+can run long by accident. A host who *didn't* name a count is running an
+open-ended night, and there the timer never decides it is over: the standings
+just sit there until someone says otherwise.
 
 All of it rides one explicit scheduled-timer record. The alarm used to infer
 its purpose from whether a round existed, which is exactly why adding a second
@@ -306,6 +310,12 @@ word on its own.
 the built-in bank stays behind them, so an event that asked for ten and got seven simply plays three
 built-ins, and an event where Workers AI never answers plays exactly as it did before any of this
 existed. The lobby says which happened; nothing blocks on it.
+
+**And it is bounded.** Preparation gets `POOL_DEADLINE_MS` — two minutes, measured from the first
+request rather than from when the event was created, so a host who makes an event and walks away
+does not come back to a window that expired while nobody was asking. Past it the endpoint stops
+spending inference, says so, and the built-in bank covers the rest. Starting a game whose pool is
+still short is allowed and takes one confirmation — the host is the one who can see the room.
 
 **The AI never touches the running game.** The clock, clue progression, one-guess enforcement,
 scoring, the leaderboard and the hidden answer all stay exactly where they were. If Workers AI is

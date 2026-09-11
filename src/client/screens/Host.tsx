@@ -4,6 +4,7 @@ import {
   DIFFICULTIES,
   EVENT_NAME_MAX,
   MYSTERY_TYPES,
+  POOL_DEADLINE_MS,
   typeLabel,
   type Difficulty,
   type HostAction,
@@ -209,6 +210,7 @@ function CreateEvent({
 type Confirm =
   | { kind: 'reset' }
   | { kind: 'end' }
+  | { kind: 'start_short'; written: number; wanted: number }
   | { kind: 'kick'; playerId: string; nickname: string };
 
 /**
@@ -270,17 +272,27 @@ function PoolPrep({
   code,
   hostToken,
   pool,
+  clockOffset,
 }: {
   code: string;
   hostToken: string;
   pool: PoolStatus;
+  clockOffset: number;
 }) {
   const [tick, setTick] = useState(0);
   const [stopped, setStopped] = useState(false);
   const [working, setWorking] = useState(false);
+  // Distinct from `stopped`: a run that gave up on the clock cannot be
+  // retried, because the server will refuse from here on.
+  const [timedOut, setTimedOut] = useState(false);
   // A ref as well as the state: the state drives the label, the ref stops a
   // second request starting before the first has come back.
   const inFlight = useRef(false);
+
+  // Drawn from the server's own deadline through the measured offset, like
+  // every other clock in the app, so the lobby and the Worker agree on when
+  // the budget runs out.
+  const budgetLeft = useDeadline(pool.expiresAt, clockOffset);
 
   const wanted = pool.wanted;
   const have = pool.ai;
@@ -298,7 +310,9 @@ function PoolPrep({
       .then((p) => {
         // `done` covers both "we have enough" and "asking again will not
         // help". Either way there is nothing left to do here.
-        if (live && p.done) setStopped(true);
+        if (!live) return;
+        if (p.timedOut) setTimedOut(true);
+        if (p.done) setStopped(true);
       })
       .catch(() => {
         // The room already carries the reason in `pool.lastError`; repeating
@@ -351,16 +365,24 @@ function PoolPrep({
           ? `${wanted} ${wanted === 1 ? 'mystery' : 'mysteries'} written for this event, on ${pool.categories
               .map((c) => typeLabel(c).label)
               .join(', ')}. You can start whenever the room is ready.`
-          : working
-            ? 'Each one is written, checked and scored before it goes in. This takes a few seconds per question - the room can keep joining.'
-            : stopped
-              ? `Wrote ${have} of ${wanted}. The remaining ${short} will come from the built-in bank, which plays exactly the same.`
-              : 'Starting...'}
+          : timedOut
+            ? `Gave up after ${POOL_DEADLINE_MS / 1000}s with ${have} of ${wanted} written. The other ${short} come from the built-in bank, which plays exactly the same - the room will not be able to tell.`
+            : working
+              ? `Each one is written, checked and scored before it goes in.${
+                  budgetLeft > 0 ? ` ${budgetLeft}s left before it falls back to the built-in bank.` : ''
+                } The room can keep joining.`
+              : stopped
+                ? `Wrote ${have} of ${wanted}. The remaining ${short} will come from the built-in bank, which plays exactly the same.`
+                : 'Starting...'}
       </p>
 
-      {pool.lastError ? <p className="tiny dim" style={{ margin: 0 }}>{pool.lastError}</p> : null}
+      {pool.lastError && !timedOut ? (
+        <p className="tiny dim" style={{ margin: 0 }}>
+          {pool.lastError}
+        </p>
+      ) : null}
 
-      {stopped && !ready ? (
+      {stopped && !ready && !timedOut ? (
         <button
           className="btn btn--ghost btn--sm"
           onClick={() => {
@@ -384,7 +406,7 @@ function HostConsole({
   code: string;
   hostToken: string;
 }) {
-  const { status, snapshot, catalog, hostBrief, clockOffset, lastError, send, clearError } = useGameSocket({
+  const { status, snapshot, hostBrief, clockOffset, lastError, send, clearError } = useGameSocket({
     code,
     role: 'host',
     hostToken,
@@ -392,12 +414,7 @@ function HostConsole({
 
   const round = snapshot?.round ?? null;
   const countdown = useCountdown(round, clockOffset);
-  const [selectedMystery, setSelectedMystery] = useState<string>('');
-  // Narrows the picker only. An empty filter means everything, which is the
-  // behaviour the picker had before.
-  const [pickerFilter, setPickerFilter] = useState<string[]>([]);
-  const [pickerSource, setPickerSource] = useState<'all' | 'builtin' | 'ai'>('all');
-  // A union rather than a parallel `kickTarget` state: it makes the three
+  // A union rather than a parallel `kickTarget` state: it makes the four
   // dialogs mutually exclusive by construction.
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   // Re-armed per round so ending one round with the answer showing cannot
@@ -419,9 +436,19 @@ function HostConsole({
   const act = (action: HostAction, extra?: { mysteryId?: string; playerId?: string }) =>
     send({ type: 'host', action, ...extra });
 
+  /**
+   * Which mystery comes next is the room's decision, not the host's - it
+   * draws from the questions written for this event first and falls back to
+   * the built-in bank. The one thing worth interrupting for is starting a
+   * night whose questions are not all written yet.
+   */
   const startRound = () => {
-    act('start_round', selectedMystery ? { mysteryId: selectedMystery } : undefined);
-    setSelectedMystery('');
+    const pool = snapshot?.pool;
+    if (pool && pool.categories.length > 0 && pool.ai < pool.wanted && snapshot?.roundsPlayed === 0) {
+      setConfirm({ kind: 'start_short', written: pool.ai, wanted: pool.wanted });
+      return;
+    }
+    act('start_round');
   };
 
   const joinUrl = `${window.location.origin}/?code=${code}`;
@@ -440,16 +467,15 @@ function HostConsole({
   const total = round?.playerCount ?? snapshot?.players.length ?? 0;
   const liveBrief = hostBrief && round && hostBrief.roundId === round.roundId ? hostBrief : null;
 
-  const builtinCount = catalog.filter((m) => m.source !== 'ai').length;
-  const aiCount = catalog.filter((m) => m.source === 'ai').length;
-  const catalogTypes = [...new Set(catalog.map((m) => m.type))].sort();
-  const visibleCatalog = catalog.filter(
-    (m) =>
-      (pickerSource === 'all' ||
-        (pickerSource === 'ai' ? m.source === 'ai' : m.source !== 'ai')) &&
-      (pickerFilter.length === 0 || pickerFilter.includes(m.type)),
-  );
   const doubleArmed = (snapshot?.nextRoundMultiplier ?? 1) > 1;
+  // The host named a number of mysteries and the room has played them all.
+  // There is no next round to offer, only a winner to announce.
+  const planComplete =
+    snapshot?.plannedRounds != null && snapshot.roundsPlayed >= snapshot.plannedRounds;
+  const roundsLeft =
+    snapshot?.plannedRounds != null
+      ? Math.max(0, snapshot.plannedRounds - snapshot.roundsPlayed)
+      : (snapshot?.mysteriesRemaining ?? 0);
   const autoSeconds = useDeadline(snapshot?.autoAdvance?.at ?? null, clockOffset);
   const isFinalPlanned =
     snapshot?.plannedRounds != null && snapshot.roundsPlayed + 1 === snapshot.plannedRounds;
@@ -487,7 +513,12 @@ function HostConsole({
           ) : null}
 
           {phase === 'lobby' && snapshot ? (
-            <PoolPrep code={code} hostToken={hostToken} pool={snapshot.pool} />
+            <PoolPrep
+              code={code}
+              hostToken={hostToken}
+              pool={snapshot.pool}
+              clockOffset={clockOffset}
+            />
           ) : null}
 
           {/* ------------------------------------------ round: get ready */}
@@ -663,15 +694,22 @@ function HostConsole({
                     {'⏹'} End round & reveal
                   </button>
                 </>
-              ) : (
+              ) : planComplete && phase !== 'finished' ? (
+                <button
+                  className="btn btn--primary btn--lg btn--block"
+                  onClick={() => act('end_event')}
+                >
+                  {'\u{1F3C1}'} Show the winner
+                </button>
+              ) : phase !== 'finished' ? (
                 <button className="btn btn--go btn--lg btn--block" onClick={startRound}>
                   {doubleArmed
-                    ? '▶ Start DOUBLE mystery'
+                    ? '▶ Start the FINAL mystery'
                     : snapshot && snapshot.roundsPlayed > 0
                       ? '▶ Next mystery'
                       : '▶ Start game'}
                 </button>
-              )}
+              ) : null}
 
               {phase === 'results' ? (
                 <button className="btn btn--cyan" onClick={() => act('show_leaderboard')}>
@@ -687,7 +725,9 @@ function HostConsole({
                 </button>
               ) : null}
 
-              {phase !== 'finished' && phase !== 'lobby' ? (
+              {/* Redundant once the plan is done - "Show the winner" above is
+                  the same action without the are-you-sure. */}
+              {phase !== 'finished' && phase !== 'lobby' && !planComplete ? (
                 <button className="btn btn--ghost" onClick={() => setConfirm({ kind: 'end' })}>
                   {'\u{1F3C1}'} End event
                 </button>
@@ -696,9 +736,11 @@ function HostConsole({
 
             {phase !== 'round' ? (
               <p className="tiny dim" style={{ margin: 0 }}>
-                {isFinalPlanned
-                  ? `This is mystery ${snapshot?.plannedRounds} of ${snapshot?.plannedRounds} - the last one, so it scores double. Tell the room before you start it.`
-                  : 'Everything advances on its own. Pause freezes the clock for the whole room, for as long as you are talking.'}
+                {planComplete
+                  ? `All ${snapshot?.plannedRounds} mysteries have been played. The podium comes up on its own - this button is only if you would rather not wait.`
+                  : isFinalPlanned
+                    ? `This is mystery ${snapshot?.plannedRounds} of ${snapshot?.plannedRounds} - the last one, so it scores double. Tell the room before you start it.`
+                    : 'Everything advances on its own. Pause freezes the clock for the whole room, for as long as you are talking.'}
               </p>
             ) : null}
 
@@ -719,7 +761,7 @@ function HostConsole({
               <div className="stat__label">Played</div>
             </div>
             <div className="stat">
-              <div className="stat__value">{snapshot?.mysteriesRemaining ?? 0}</div>
+              <div className="stat__value">{roundsLeft}</div>
               <div className="stat__label">Left</div>
             </div>
             {phase === 'round' ? (
@@ -731,78 +773,6 @@ function HostConsole({
               </div>
             ) : null}
           </div>
-
-          {phase !== 'round' ? (
-            <div className="card stack">
-              <div className="card__title">Pick the next mystery</div>
-              <p className="tiny dim" style={{ margin: 0 }}>
-                Leave unselected to draw the next one at random.
-              </p>
-
-              <div className="row" style={{ gap: 6 }}>
-                {(['all', 'builtin', 'ai'] as const).map((sourceOption) => (
-                  <button
-                    key={sourceOption}
-                    className={`btn btn--sm ${pickerSource === sourceOption ? 'btn--cyan' : 'btn--ghost'}`}
-                    onClick={() => setPickerSource(sourceOption)}
-                  >
-                    {sourceOption === 'all'
-                      ? `All ${catalog.length}`
-                      : sourceOption === 'builtin'
-                        ? `Built-in ${builtinCount}`
-                        : `✨ AI ${aiCount}`}
-                  </button>
-                ))}
-              </div>
-
-              {catalogTypes.length > 1 ? (
-                <div className="catgrid">
-                  {catalogTypes.map((t) => (
-                    <label key={t} className={`catchip${pickerFilter.includes(t) ? ' catchip--on' : ''}`}>
-                      <input
-                        type="checkbox"
-                        checked={pickerFilter.includes(t)}
-                        onChange={() =>
-                          setPickerFilter((prev) =>
-                            prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
-                          )
-                        }
-                      />
-                      <span>
-                        {typeLabel(t).emoji} {typeLabel(t).label}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              ) : null}
-
-              <div className="picker">
-                {visibleCatalog.length === 0 ? (
-                  <p className="tiny dim" style={{ margin: 0 }}>
-                    Nothing matches that filter.
-                  </p>
-                ) : null}
-                {visibleCatalog.map((m) => (
-                  <button
-                    className={`picker__item${selectedMystery === m.id ? ' picker__item--selected' : ''}`}
-                    key={m.id}
-                    disabled={m.used}
-                    onClick={() => setSelectedMystery(selectedMystery === m.id ? '' : m.id)}
-                  >
-                    <span>{typeLabel(m.type).emoji}</span>
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: 'block' }}>{m.title}</span>
-                      <span className="picker__type">
-                        {typeLabel(m.type).label}
-                        {m.source === 'ai' ? ' · ✨ AI' : ''}
-                      </span>
-                    </span>
-                    {m.used ? <span className="tiny dim">played</span> : null}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
 
           <div className="card stack">
             <div className="row row--between">
@@ -886,6 +856,24 @@ function HostConsole({
         >
           Everyone jumps to the final results and the winner celebration. You can still reset afterwards to
           run another game.
+        </Modal>
+      ) : null}
+
+      {confirm?.kind === 'start_short' ? (
+        <Modal
+          title="Questions are not all written yet"
+          confirmLabel="Start anyway"
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => {
+            setConfirm(null);
+            act('start_round');
+          }}
+        >
+          {confirm.written} of {confirm.wanted}{' '}
+          {confirm.wanted === 1 ? 'mystery has' : 'mysteries have'} been written for this event. The
+          other {confirm.wanted - confirm.written} will come from the built-in question bank, which
+          plays exactly the same - the room will not be able to tell. Waiting a little longer may
+          get the rest.
         </Modal>
       ) : null}
 
