@@ -212,9 +212,13 @@ export function Play({ navigate, code }: { navigate: (to: string, replace?: bool
           <h2 className="title-xl intro__title">{round.title}</h2>
           <div className="intro__count">{countdown.seconds}</div>
           <div className="timer__label">First clue in</div>
+          {/* Pills never wrap, so on a phone this has to stay short enough to
+              fit the card - the longer wording overflowed and clipped the word
+              that matters. The line below already states the doubled figure,
+              and the projector still carries the full explanation. */}
           {round.pointsMultiplier > 1 ? (
             <div className="pill pill--streak intro__hint" style={{ fontSize: 15 }}>
-              {'⚡'} DOUBLE POINTS {'·'} everything this round counts twice
+              {'⚡'} DOUBLE POINTS
             </div>
           ) : null}
           <p className="intro__hint tiny" style={{ maxWidth: 320 }}>
